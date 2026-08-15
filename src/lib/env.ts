@@ -32,6 +32,11 @@ const serverEnvSchema = z.object({
   OCR_API_URL: z.string().optional(),
   SITE_URL: z.string().url().default("http://localhost:3000"),
   STOCK_RESERVATION_TTL_MINUTES: z.coerce.number().int().positive().default(15),
+  // Bearer secret the reservation-expiration cron endpoint requires.
+  // Optional at the schema level so the app still boots without it, but
+  // the endpoint itself treats an unset secret as "reject everything"
+  // (fail closed, never fail open) — see src/app/api/cron/expire-reservations/route.ts.
+  CRON_SECRET: z.string().min(1).optional(),
 });
 
 export function getServerEnv() {
@@ -43,5 +48,6 @@ export function getServerEnv() {
     OCR_API_URL: process.env.OCR_API_URL,
     SITE_URL: process.env.SITE_URL,
     STOCK_RESERVATION_TTL_MINUTES: process.env.STOCK_RESERVATION_TTL_MINUTES,
+    CRON_SECRET: process.env.CRON_SECRET,
   });
 }

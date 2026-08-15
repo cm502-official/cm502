@@ -43,3 +43,8 @@ next-env.d.ts
 # Claude Code local tooling (session permissions, dev-server preview
 # config) — machine/session-specific, not part of the CM502 app.
 .claude/
+
+# Supabase CLI local link state (project ref, pooler URL, service
+# versions) — machine-specific and can carry connection details. Never
+# commit; each developer links their own local CLI to the project.
+supabase/.temp/

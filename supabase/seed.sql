@@ -47,8 +47,10 @@ on conflict (product_id, color_id, size_id) do nothing;
 
 insert into shipping_methods (name, description, price_satang, is_active, sort_order)
 values ('Standard Shipping', 'Delivered in 2-4 business days.', 5000, true, 1)
-on conflict do nothing;
+on conflict (name) do nothing;
 
+-- Insert-only: once an admin has configured real bank/PromptPay details,
+-- a reseed must never overwrite them back to the REPLACE_ME placeholders.
 insert into site_settings (key, value) values
   ('payment_bank_transfer', jsonb_build_object(
     'bank_name', 'REPLACE_ME',
@@ -60,4 +62,4 @@ insert into site_settings (key, value) values
     'qr_image_storage_path', null
   )),
   ('stock_reservation_ttl_minutes', to_jsonb(15))
-on conflict (key) do update set value = excluded.value, updated_at = now();
+on conflict (key) do nothing;
