@@ -8,7 +8,7 @@
 insert into products (slug, name, description, care_info, base_price_satang, is_active)
 values (
   'jersey',
-  'CM502 University Jersey',
+  'CM502 Jersey',
   'Placeholder description — replace with final CM502 product copy.',
   'Placeholder care instructions — replace with final fabric/wash guidance.',
   99000, -- ฿990.00 placeholder price, admin-configurable

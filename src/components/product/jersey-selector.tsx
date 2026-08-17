@@ -126,12 +126,12 @@ export function JerseySelector({ product }: { product: JerseyProduct }) {
   const canOpenCustomization = quantity > 0;
 
   return (
-    <div className="flex flex-col gap-8 lg:grid lg:grid-cols-[minmax(0,3fr)_minmax(380px,2fr)] lg:items-start lg:gap-14">
+    <div className="flex flex-col gap-3 sm:gap-8 lg:grid lg:grid-cols-[minmax(0,3fr)_minmax(380px,2fr)] lg:items-start lg:gap-14">
       <ProductGallery images={images} productName={product.name} />
 
-      <div className="flex flex-col gap-6 lg:sticky lg:top-24">
-        <div className="flex flex-col gap-3">
-          <h1 className="font-display text-4xl uppercase tracking-wide sm:text-5xl">{product.name}</h1>
+      <div className="flex flex-col gap-3 sm:gap-6 lg:sticky lg:top-24">
+        <div className="flex flex-col gap-2 sm:gap-3">
+          <h1 className="font-display text-3xl uppercase tracking-wide sm:text-4xl lg:text-5xl">{product.name}</h1>
 
           {product.isPreorder ? (
             <div>

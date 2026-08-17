@@ -3,8 +3,8 @@ import { getJerseyProduct } from "@/lib/catalog/get-jersey-product";
 import { JerseySelector } from "@/components/product/jersey-selector";
 
 export const metadata: Metadata = {
-  title: "University Jersey",
-  description: "CM502 University Jersey — choose your color and size.",
+  title: "CM502 Jersey",
+  description: "CM502 Jersey — choose your color and size.",
 };
 
 export default async function JerseyProductPage() {
@@ -35,7 +35,7 @@ export default async function JerseyProductPage() {
   };
 
   return (
-    <section className="mx-auto max-w-[1440px] px-4 py-8 md:px-8 lg:px-10 sm:py-16">
+    <section className="mx-auto max-w-[1440px] px-4 py-4 sm:py-16 md:px-8 lg:px-10">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
