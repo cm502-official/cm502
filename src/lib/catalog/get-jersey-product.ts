@@ -93,7 +93,7 @@ async function loadJerseyProduct(): Promise<JerseyProduct | null> {
       id: img.id,
       colorId: img.color_id,
       variantId: img.variant_id,
-      url: `${publicUrl}/${img.storage_path}`,
+      url: buildProductImageUrl(publicUrl, img.storage_path),
       altText: img.alt_text,
       imageType: img.image_type,
       sortOrder: img.sort_order,
@@ -104,4 +104,24 @@ async function loadJerseyProduct(): Promise<JerseyProduct | null> {
 function getProductImagePublicUrlBase(): string {
   const { NEXT_PUBLIC_SUPABASE_URL } = getPublicEnv();
   return `${NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/product-images`;
+}
+
+// Catalog images are re-uploaded to Storage under the *same* storage_path
+// (e.g. cm502-jersey/navy/primary.jpg gets overwritten in place when a
+// color photo is replaced) — product_images has no updated_at/version
+// column to derive a cache-busting value from automatically. Without a
+// query string, the URL never changes when only the file's bytes do, so
+// the browser cache, Vercel's Next/Image optimizer cache, and the
+// Supabase Storage CDN can all keep serving the previous photo under the
+// old cache key indefinitely.
+//
+// Fix: append a manual version tag to every catalog image URL. Bump
+// CATALOG_IMAGE_ASSET_VERSION whenever an existing storage_path is
+// overwritten with new image bytes (not needed for genuinely new paths)
+// — that changes the URL, which is a guaranteed cache miss at every layer
+// without disabling caching anywhere.
+const CATALOG_IMAGE_ASSET_VERSION = "20260817-navy-2";
+
+function buildProductImageUrl(publicUrlBase: string, storagePath: string): string {
+  return `${publicUrlBase}/${storagePath}?v=${CATALOG_IMAGE_ASSET_VERSION}`;
 }
