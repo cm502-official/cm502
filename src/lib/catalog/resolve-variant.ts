@@ -58,6 +58,17 @@ export function getAvailableColors(variants: Variant[], colors: Color[]): Color[
   return colors.filter((c) => activeColorIds.has(c.id));
 }
 
+/**
+ * True when a color has at least one active variant but every one of them
+ * is out of stock — i.e. the color is shown (not hidden like an inactive
+ * color) but nothing in it can currently be purchased.
+ */
+export function isColorSoldOut(variants: Variant[], colorId: string): boolean {
+  const activeVariants = variants.filter((v) => v.colorId === colorId && v.isActive);
+  if (activeVariants.length === 0) return false;
+  return activeVariants.every((v) => v.availableStock !== null && v.availableStock <= 0);
+}
+
 /** Variant price override wins; otherwise the product's base price. */
 export function getEffectivePriceSatang(basePriceSatang: number, variant: Variant | null): number {
   if (variant?.priceSatangOverride != null) return variant.priceSatangOverride;

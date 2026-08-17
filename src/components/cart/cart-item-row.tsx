@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Image from "next/image";
 import type { CartItem } from "@/lib/cart/schema";
 import { formatSatangAsThb } from "@/lib/money";
@@ -15,12 +16,23 @@ export function CartItemRow({
   onRemove: () => void;
 }) {
   const lineTotal = item.unitPriceSatang * item.quantity;
+  // A bad/expired image URL must never surface a broken-image icon — fall
+  // back to the same plain CM502 placeholder used when there's no image
+  // at all.
+  const [imageFailed, setImageFailed] = useState(false);
 
   return (
     <div className="flex gap-4 border-b border-line py-5 first:pt-0 last:border-b-0">
       <div className="relative h-24 w-20 flex-none bg-paper-dim">
-        {item.imageUrl ? (
-          <Image src={item.imageUrl} alt={item.productName} fill sizes="80px" className="object-cover" />
+        {item.imageUrl && !imageFailed ? (
+          <Image
+            src={item.imageUrl}
+            alt={`${item.productName} – ${item.colorName}`}
+            fill
+            sizes="80px"
+            className="object-cover"
+            onError={() => setImageFailed(true)}
+          />
         ) : (
           <div className="flex h-full w-full items-center justify-center">
             <span className="font-display text-sm text-ink/25">CM502</span>

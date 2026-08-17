@@ -9,6 +9,7 @@ import {
   getEffectivePriceSatang,
   getImagesForColor,
   getSizeStatesForColor,
+  isColorSoldOut,
   resolveVariant,
 } from "@/lib/catalog/resolve-variant";
 import { formatSatangAsThb } from "@/lib/money";
@@ -110,25 +111,45 @@ export function JerseySelector({ product }: { product: JerseyProduct }) {
           <legend className="text-xs font-semibold uppercase tracking-[0.15em] text-foreground/60">
             Color{selectedColorId && `: ${product.colors.find((c) => c.id === selectedColorId)?.name ?? ""}`}
           </legend>
-          <div className="mt-3 flex flex-wrap gap-3">
+          <div className="mt-3 flex flex-wrap gap-4">
             {availableColors.map((color) => {
               const selected = color.id === selectedColorId;
+              const soldOut = isColorSoldOut(product.variants, color.id);
               return (
                 <button
                   key={color.id}
                   type="button"
                   onClick={() => handleSelectColor(color.id)}
                   aria-pressed={selected}
-                  aria-label={color.name}
-                  title={color.name}
-                  className={`flex h-11 w-11 items-center justify-center border-2 transition-colors ${
-                    selected ? "border-ink" : "border-transparent"
-                  }`}
+                  title={soldOut ? `${color.name}, sold out` : color.name}
+                  className="flex flex-col items-center gap-1.5"
                 >
                   <span
-                    className="h-8 w-8 rounded-full border border-line"
-                    style={{ backgroundColor: color.hexCode ?? "#ccc" }}
-                  />
+                    className={`relative flex h-11 w-11 items-center justify-center border-2 transition-colors ${
+                      selected ? "border-ink" : "border-transparent"
+                    }`}
+                  >
+                    <span
+                      className={`h-8 w-8 rounded-full border border-line ${soldOut ? "opacity-35" : ""}`}
+                      style={{ backgroundColor: color.hexCode ?? "#ccc" }}
+                    />
+                    {soldOut && (
+                      <span
+                        className="pointer-events-none absolute inset-1 rotate-45 border-t border-ink/40"
+                        aria-hidden
+                      />
+                    )}
+                  </span>
+                  {/* Color is always named in visible text, never conveyed by
+                      swatch color alone (§11). */}
+                  <span
+                    className={`text-[11px] font-medium ${
+                      soldOut ? "text-foreground/30" : selected ? "text-ink" : "text-foreground/60"
+                    }`}
+                  >
+                    {color.name}
+                    {soldOut && " (Sold out)"}
+                  </span>
                 </button>
               );
             })}
@@ -266,6 +287,12 @@ export function JerseySelector({ product }: { product: JerseyProduct }) {
   );
 }
 
+/**
+ * No real garment measurements have been supplied yet — showing fabricated
+ * chest/length numbers would mislead a customer into buying the wrong
+ * size. Until the owner provides real measurements, this stays a
+ * restrained "coming soon" state rather than invented data.
+ */
 function SizeGuideDisclosure() {
   return (
     <details className="relative">
@@ -273,22 +300,10 @@ function SizeGuideDisclosure() {
         Size Guide
       </summary>
       <div className="absolute right-0 top-full z-10 mt-2 w-64 border border-line bg-background p-4 text-xs shadow-lg">
-        <table className="w-full text-left">
-          <thead>
-            <tr className="text-foreground/50">
-              <th className="pb-2 font-medium">Size</th>
-              <th className="pb-2 font-medium">Chest (in)</th>
-              <th className="pb-2 font-medium">Length (in)</th>
-            </tr>
-          </thead>
-          <tbody className="tabular-nums">
-            <tr><td className="py-1">S</td><td>38</td><td>27</td></tr>
-            <tr><td className="py-1">M</td><td>40</td><td>28</td></tr>
-            <tr><td className="py-1">L</td><td>42</td><td>29</td></tr>
-            <tr><td className="py-1">XL</td><td>44</td><td>30</td></tr>
-          </tbody>
-        </table>
-        <p className="mt-2 text-foreground/50">Placeholder measurements — confirm before launch.</p>
+        <p className="text-foreground/70">Size measurements coming soon.</p>
+        <p className="mt-2 text-foreground/50">
+          Available sizes: S, M, L, XL. Contact us if you need help choosing.
+        </p>
       </div>
     </details>
   );

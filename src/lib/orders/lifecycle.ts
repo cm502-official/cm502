@@ -92,6 +92,30 @@ export function isOrderPayable(
   return !isReservationExpired(order, now);
 }
 
+/** True only once payment has actually been confirmed verified. */
+export function isPaymentVerified(order: { paymentStatus: string }): boolean {
+  return order.paymentStatus === "verified";
+}
+
+/**
+ * Whether the customer should still see a slip-upload control. Centralizes
+ * every reason upload should be blocked, so the payment page and the
+ * upload route handler can never drift on this decision (§2/§19):
+ *   - already verified — nothing left to upload for
+ *   - reservation genuinely expired (client-side detected OR DB-confirmed)
+ * Re-upload IS allowed for needs_review/rejected/duplicate_slip — those
+ * are correctable customer mistakes, not terminal states (§19).
+ */
+export function canUploadPaymentSlip(
+  order: { paymentStatus: string; reservationExpiresAt: string | null },
+  now: number = Date.now(),
+): boolean {
+  if (isPaymentVerified(order)) return false;
+  if (order.paymentStatus === "expired") return false;
+  if (isReservationExpired(order, now)) return false;
+  return true;
+}
+
 export type CountdownState =
   | { status: "no-deadline" }
   | { status: "invalid" }

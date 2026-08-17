@@ -102,6 +102,48 @@ describe("removeFromCart / clearCart", () => {
   });
 });
 
+describe("selected-color image propagation", () => {
+  it("preserves the exact selected-color imageUrl through add-to-cart and persistence", () => {
+    const navyItem = {
+      ...ITEM_A,
+      variantId: "3fa85f64-5717-4562-b3fc-2c963f66afa8",
+      colorName: "Navy",
+      sku: "CM502-JERSEY-NAVY-M",
+      imageUrl: "https://example.supabase.co/storage/v1/object/public/product-images/cm502-jersey/navy/primary.jpg",
+    };
+    addToCart(navyItem, 1);
+    expect(getCartSnapshot().items[0].imageUrl).toBe(navyItem.imageUrl);
+
+    // Round-trips through localStorage exactly — checkout/cart reads must
+    // never fall back to some other color's image.
+    const persisted = JSON.parse(window.localStorage.getItem(CART_STORAGE_KEY)!);
+    expect(persisted.items[0].imageUrl).toBe(navyItem.imageUrl);
+  });
+
+  it("keeps each color's own image when multiple colors are in the cart at once", () => {
+    const pinkItem = {
+      ...ITEM_A,
+      variantId: "3fa85f64-5717-4562-b3fc-2c963f66afa9",
+      colorName: "Pink",
+      sku: "CM502-JERSEY-PINK-M",
+      imageUrl: "pink/primary.jpg",
+    };
+    const brownItem = {
+      ...ITEM_A,
+      variantId: "3fa85f64-5717-4562-b3fc-2c963f66afaa",
+      colorName: "Brown",
+      sku: "CM502-JERSEY-BROWN-M",
+      imageUrl: "brown/primary.jpg",
+    };
+    addToCart(pinkItem, 1);
+    addToCart(brownItem, 1);
+
+    const items = getCartSnapshot().items;
+    expect(items.find((i) => i.variantId === pinkItem.variantId)?.imageUrl).toBe("pink/primary.jpg");
+    expect(items.find((i) => i.variantId === brownItem.variantId)?.imageUrl).toBe("brown/primary.jpg");
+  });
+});
+
 describe("malformed localStorage recovery", () => {
   it("recovers from invalid JSON without throwing, falling back to an empty cart", () => {
     window.localStorage.setItem(CART_STORAGE_KEY, "{not valid json");
