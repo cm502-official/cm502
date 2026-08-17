@@ -1,0 +1,31 @@
+-- CM502 — fix: two more functions caught by the same systemic default-
+-- privilege gap found and fixed in 0009 for the four main RPCs.
+--
+-- Found during the Phase 4B full RPC audit (§Step 3): generate_order_number()
+-- and generate_tracking_token() are used as column DEFAULT expressions on
+-- orders.order_number / orders.tracking_token (0001) and were never given
+-- an explicit grant/revoke of their own — so like every other function in
+-- this project before 0009, they inherited this project's default
+-- privilege grant of EXECUTE to anon/authenticated.
+--
+-- Verified live impact before this fix:
+--   - generate_tracking_token(): anon could call it directly and get back
+--     a real random hex token. Harmless on its own (no side effects, no
+--     table access, pure `gen_random_bytes` output) — but still an
+--     unintended public RPC surface for an internal helper.
+--   - generate_order_number(): anon could invoke it, but it failed with
+--     "new row violates row-level security policy for table
+--     order_number_counters" — RLS (admin-only on that table, 0002)
+--     blocked the actual counter increment. No real exploit, same
+--     defense-in-depth pattern as 0009's finding.
+--
+-- Column DEFAULT expressions are evaluated with the privileges of the
+-- role performing the INSERT, not a fixed owner (neither function is
+-- SECURITY DEFINER) — but service_role's elevated privileges already
+-- allow it independent of any explicit grant here (confirmed live: real
+-- orders have been created successfully via the service-role-only
+-- create_order_with_reservation path throughout Phase 3), so revoking
+-- from anon/authenticated only does not break order creation.
+
+revoke execute on function generate_order_number() from anon, authenticated;
+revoke execute on function generate_tracking_token() from anon, authenticated;

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import Link from "next/link";
 import { useCart } from "@/lib/cart/use-cart";
 import { clearCart } from "@/lib/cart/store";
@@ -291,6 +292,35 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
   );
 }
 
+/**
+ * Checkout must show the exact color image the customer selected — never
+ * an arbitrary/default product image (§17). The cart item already carries
+ * the correct per-color `imageUrl`, so this just renders it with the same
+ * broken-image fallback used elsewhere (§14).
+ */
+function CheckoutItemThumbnail({ item }: { item: CartItem }) {
+  const [imageFailed, setImageFailed] = useState(false);
+
+  return (
+    <div className="relative h-14 w-12 flex-none bg-paper-dim">
+      {item.imageUrl && !imageFailed ? (
+        <Image
+          src={item.imageUrl}
+          alt={`${item.productName} – ${item.colorName}`}
+          fill
+          sizes="48px"
+          className="object-cover"
+          onError={() => setImageFailed(true)}
+        />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center">
+          <span className="font-display text-[9px] text-ink/25">CM502</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OrderSummary({
   items,
   subtotalSatang,
@@ -306,8 +336,9 @@ function OrderSummary({
     <div className="border border-line p-5">
       <ul className="flex flex-col gap-3">
         {items.map((item) => (
-          <li key={item.variantId} className="flex items-center justify-between text-sm">
-            <span>
+          <li key={item.variantId} className="flex items-center gap-3 text-sm">
+            <CheckoutItemThumbnail item={item} />
+            <span className="flex-1">
               {item.productName}
               <span className="text-foreground/60">
                 {" "}

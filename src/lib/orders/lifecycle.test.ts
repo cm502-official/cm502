@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  canUploadPaymentSlip,
   formatCountdown,
   getCountdownState,
   getFulfillmentStatusLabel,
   getPaymentStatusLabel,
   isOrderPayable,
+  isPaymentVerified,
   isReservationExpired,
 } from "./lifecycle";
 
@@ -108,5 +110,40 @@ describe("formatCountdown", () => {
 
   it("never goes negative", () => {
     expect(formatCountdown(-5000)).toBe("00:00");
+  });
+});
+
+describe("isPaymentVerified", () => {
+  it("is true only for payment_status === 'verified'", () => {
+    expect(isPaymentVerified({ paymentStatus: "verified" })).toBe(true);
+    expect(isPaymentVerified({ paymentStatus: "needs_review" })).toBe(false);
+    expect(isPaymentVerified({ paymentStatus: "awaiting_payment" })).toBe(false);
+  });
+});
+
+describe("canUploadPaymentSlip", () => {
+  const future = new Date(Date.now() + 60_000).toISOString();
+  const past = new Date(Date.now() - 60_000).toISOString();
+
+  it("allows upload while awaiting payment with time remaining", () => {
+    expect(canUploadPaymentSlip({ paymentStatus: "awaiting_payment", reservationExpiresAt: future })).toBe(true);
+  });
+
+  it("allows re-upload after needs_review, rejected, or duplicate_slip (correctable)", () => {
+    expect(canUploadPaymentSlip({ paymentStatus: "needs_review", reservationExpiresAt: future })).toBe(true);
+    expect(canUploadPaymentSlip({ paymentStatus: "rejected", reservationExpiresAt: future })).toBe(true);
+    expect(canUploadPaymentSlip({ paymentStatus: "duplicate_slip", reservationExpiresAt: future })).toBe(true);
+  });
+
+  it("blocks upload once verified", () => {
+    expect(canUploadPaymentSlip({ paymentStatus: "verified", reservationExpiresAt: future })).toBe(false);
+  });
+
+  it("blocks upload once payment_status is already 'expired'", () => {
+    expect(canUploadPaymentSlip({ paymentStatus: "expired", reservationExpiresAt: past })).toBe(false);
+  });
+
+  it("blocks upload when the reservation deadline has passed but the DB hasn't been swept yet", () => {
+    expect(canUploadPaymentSlip({ paymentStatus: "awaiting_payment", reservationExpiresAt: past })).toBe(false);
   });
 });
