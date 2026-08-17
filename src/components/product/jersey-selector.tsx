@@ -306,7 +306,7 @@ export function JerseySelector({ product }: { product: JerseyProduct }) {
         onClose={() => setCustomizeOpen(false)}
         drafts={drafts}
         onDraftsChange={setDrafts}
-        colors={product.colors}
+        colors={availableColors}
         sizes={product.sizes}
         canSave={allDraftsValid(drafts)}
         onSaveAndAddToCart={handleSaveAndAddToCart}

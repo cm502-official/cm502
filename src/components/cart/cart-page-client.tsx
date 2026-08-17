@@ -15,7 +15,7 @@ import {
   resolveDraftsToGroups,
   type ShirtDraft,
 } from "@/lib/customization/shirt-draft";
-import { getImagesForColor } from "@/lib/catalog/resolve-variant";
+import { getAvailableColors, getImagesForColor } from "@/lib/catalog/resolve-variant";
 import { getJerseyUnitPriceSatang } from "@/lib/pricing/jersey-tiers";
 
 export function CartPageClient({ product }: { product: JerseyProduct | null }) {
@@ -162,7 +162,7 @@ export function CartPageClient({ product }: { product: JerseyProduct | null }) {
           onClose={() => setEditingVariantId(null)}
           drafts={editDrafts}
           onDraftsChange={setEditDrafts}
-          colors={product.colors}
+          colors={getAvailableColors(product.variants, product.colors)}
           sizes={product.sizes}
           canSave={allDraftsValid(editDrafts)}
           onSaveAndAddToCart={commitEdit}
