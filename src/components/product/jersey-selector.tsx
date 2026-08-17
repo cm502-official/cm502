@@ -3,20 +3,26 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { JerseyProduct } from "@/lib/catalog/types";
+import { getAvailableColors, getImagesForColor, isColorSoldOut } from "@/lib/catalog/resolve-variant";
 import {
-  clampQuantity,
-  getAvailableColors,
-  getEffectivePriceSatang,
-  getImagesForColor,
-  getSizeStatesForColor,
-  isColorSoldOut,
-  resolveVariant,
-} from "@/lib/catalog/resolve-variant";
+  calculateJerseySubtotalSatang,
+  getJerseyPriceRangeSatang,
+  getJerseyUnitPriceSatang,
+} from "@/lib/pricing/jersey-tiers";
 import { formatSatangAsThb } from "@/lib/money";
 import { addToCart } from "@/lib/cart/store";
-import { setBuyNowItem } from "@/lib/cart/buy-now";
+import { setBuyNowItems } from "@/lib/cart/buy-now";
+import type { CartItem } from "@/lib/cart/schema";
+import {
+  allDraftsValid,
+  resizeDrafts,
+  resolveDraftsToGroups,
+  type ShirtDraft,
+} from "@/lib/customization/shirt-draft";
 import { ProductGallery } from "./product-gallery";
-import { QuantityInput } from "@/components/ui/quantity-input";
+import { SizeChartDrawer } from "./size-chart-drawer";
+import { PricingModal } from "./pricing-modal";
+import { CustomizationModal } from "./customization-modal";
 
 export function JerseySelector({ product }: { product: JerseyProduct }) {
   const router = useRouter();
@@ -25,214 +31,243 @@ export function JerseySelector({ product }: { product: JerseyProduct }) {
     [product.variants, product.colors],
   );
 
-  const [selectedColorId, setSelectedColorId] = useState<string | null>(availableColors[0]?.id ?? null);
-  const [selectedSizeId, setSelectedSizeId] = useState<string | null>(null);
-  const [quantity, setQuantity] = useState(1);
+  // Browsing color only — switches the gallery image set. Does NOT
+  // determine any shirt's purchased color (§2); that's chosen per shirt
+  // inside the customization modal.
+  const [browsingColorId, setBrowsingColorId] = useState<string | null>(availableColors[0]?.id ?? null);
+  const images = useMemo(
+    () => getImagesForColor(product.images, browsingColorId),
+    [product.images, browsingColorId],
+  );
+
+  // Total quantity is the FIRST thing the customer picks (§1). Per-shirt
+  // drafts are resized to match, preserving already-customized shirts
+  // (§14) — persisted here in the parent so they survive the
+  // customization modal being closed and reopened (§3).
+  const [quantity, setQuantity] = useState(0);
+  const [drafts, setDrafts] = useState<ShirtDraft[]>([]);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const [pricingModalOpen, setPricingModalOpen] = useState(false);
+  const [sizeChartOpen, setSizeChartOpen] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  const sizeStates = useMemo(
-    () => getSizeStatesForColor(product.variants, product.sizes, selectedColorId),
-    [product.variants, product.sizes, selectedColorId],
-  );
+  const priceRange = useMemo(() => getJerseyPriceRangeSatang(), []);
+  const unitPriceSatang = getJerseyUnitPriceSatang(quantity);
+  const subtotalSatang = calculateJerseySubtotalSatang(quantity);
 
-  const selectedVariant = useMemo(
-    () => resolveVariant(product.variants, selectedColorId, selectedSizeId),
-    [product.variants, selectedColorId, selectedSizeId],
-  );
-
-  const images = useMemo(
-    () => getImagesForColor(product.images, selectedColorId),
-    [product.images, selectedColorId],
-  );
-
-  const stock = selectedVariant?.availableStock ?? null;
-  const isSoldOut = selectedVariant !== null && selectedVariant.isActive && stock !== null && stock <= 0;
-  const canPurchase = selectedVariant !== null && selectedVariant.isActive && !isSoldOut && quantity > 0;
-  const priceSatang = getEffectivePriceSatang(product.basePriceSatang, selectedVariant);
-
-  function handleSelectColor(colorId: string) {
-    setSelectedColorId(colorId);
-    setSelectedSizeId(null);
-    setQuantity(1);
+  function handleQuantityChange(next: number) {
+    const clamped = Math.max(0, Math.min(100000, Math.trunc(next)));
+    const { drafts: resized, droppedHadData } = resizeDrafts(drafts, clamped);
+    if (droppedHadData) {
+      const removedCount = drafts.length - clamped;
+      const confirmed = window.confirm(
+        `การลดจำนวนจะลบรายละเอียดของเสื้อ ${removedCount} ตัวล่าสุด ต้องการดำเนินการต่อหรือไม่?`,
+      );
+      if (!confirmed) return;
+    }
+    setDrafts(resized);
+    setQuantity(clamped);
     setFeedback(null);
   }
 
-  function handleSelectSize(sizeId: string) {
-    setSelectedSizeId(sizeId);
-    const variant = resolveVariant(product.variants, selectedColorId, sizeId);
-    setQuantity(clampQuantity(1, variant?.availableStock ?? null) || 1);
-    setFeedback(null);
+  function openCustomization() {
+    if (quantity <= 0) return;
+    if (drafts.length !== quantity) {
+      setDrafts(resizeDrafts(drafts, quantity).drafts);
+    }
+    setCustomizeOpen(true);
   }
 
-  function buildCartItem() {
-    if (!selectedVariant || !selectedColorId || !selectedSizeId) return null;
-    const color = product.colors.find((c) => c.id === selectedColorId);
-    const size = product.sizes.find((s) => s.id === selectedSizeId);
-    if (!color || !size) return null;
-    return {
-      variantId: selectedVariant.id,
+  function buildCartItemsFromDrafts(): CartItem[] | null {
+    const groups = resolveDraftsToGroups(drafts, product.variants, product.colors, product.sizes);
+    if (!groups) return null;
+    const totalQty = groups.reduce((sum, g) => sum + g.customizations.length, 0);
+    const groupUnitPrice = getJerseyUnitPriceSatang(totalQty);
+    const galleryByColor = new Map(
+      product.colors.map((c) => [c.id, getImagesForColor(product.images, c.id)[0]?.url ?? null]),
+    );
+    return groups.map((g) => ({
+      variantId: g.variant.id,
       productId: product.id,
       productSlug: product.slug,
       productName: product.name,
-      colorName: color.name,
-      sizeName: size.name,
-      sku: selectedVariant.sku,
-      unitPriceSatang: priceSatang,
-      imageUrl: images[0]?.url ?? null,
-    };
+      colorName: g.color.name,
+      sizeName: g.size.name,
+      sku: g.variant.sku,
+      unitPriceSatang: groupUnitPrice,
+      imageUrl: galleryByColor.get(g.color.id) ?? null,
+      quantity: g.customizations.length,
+      customizations: g.customizations,
+    }));
   }
 
-  function handleAddToCart() {
-    const item = buildCartItem();
-    if (!item) return;
-    addToCart(item, quantity);
-    setFeedback(`Added ${quantity} × ${item.colorName} / ${item.sizeName} to your cart.`);
+  function handleSaveAndAddToCart() {
+    if (!allDraftsValid(drafts)) return;
+    const items = buildCartItemsFromDrafts();
+    if (!items) return;
+    for (const item of items) {
+      addToCart(item, item.customizations);
+    }
+    setCustomizeOpen(false);
+    setFeedback(`Added ${quantity} customized shirt${quantity > 1 ? "s" : ""} to your cart.`);
+    setQuantity(0);
+    setDrafts([]);
   }
 
   function handleBuyNow() {
-    const item = buildCartItem();
-    if (!item) return;
-    setBuyNowItem({ ...item, quantity });
+    if (!allDraftsValid(drafts)) return;
+    const items = buildCartItemsFromDrafts();
+    if (!items) return;
+    setBuyNowItems(items);
+    setCustomizeOpen(false);
     router.push("/checkout");
   }
 
+  const canOpenCustomization = quantity > 0;
+
   return (
-    <div className="flex flex-col gap-8 lg:grid lg:grid-cols-2 lg:gap-16">
+    <div className="flex flex-col gap-8 lg:grid lg:grid-cols-[minmax(0,3fr)_minmax(380px,2fr)] lg:items-start lg:gap-14">
       <ProductGallery images={images} productName={product.name} />
 
-      <div className="flex flex-col gap-6">
-        <div>
+      <div className="flex flex-col gap-6 lg:sticky lg:top-24">
+        <div className="flex flex-col gap-3">
           <h1 className="font-display text-4xl uppercase tracking-wide sm:text-5xl">{product.name}</h1>
-          <p className="mt-2 text-xl font-medium tabular-nums">{formatSatangAsThb(priceSatang)}</p>
+
+          {product.isPreorder ? (
+            <div>
+              <p className="text-xl font-medium tabular-nums">
+                {formatSatangAsThb(priceRange.minSatang)}–{formatSatangAsThb(priceRange.maxSatang)}
+                <span className="text-sm font-normal text-foreground/50"> / ตัว</span>
+              </p>
+              <p className="mt-1 text-xs text-foreground/50">ราคาต่อชิ้น ขึ้นอยู่กับจำนวนที่สั่ง</p>
+              <button
+                type="button"
+                onClick={() => setPricingModalOpen(true)}
+                className="mt-1 text-xs font-medium underline underline-offset-4 text-foreground/70 transition-colors hover:text-foreground"
+              >
+                ดูราคาตามจำนวน
+              </button>
+            </div>
+          ) : (
+            <p className="text-xl font-medium tabular-nums">{formatSatangAsThb(product.basePriceSatang)}</p>
+          )}
+
+          {product.isPreorder && (
+            <p className="inline-flex w-fit items-center gap-1.5 border border-line px-2.5 py-1 text-[11px] uppercase tracking-[0.1em] text-foreground/60">
+              พรีออเดอร์ <span aria-hidden>·</span> สั่งได้ไม่จำกัดจำนวน
+            </p>
+          )}
         </div>
 
-        {/* Color selection — name is always shown as text, never conveyed by swatch color alone. */}
+        {/* Color previews — browsing only, controls the gallery image set.
+            The actual purchased color/size for each shirt is chosen
+            per-shirt inside the customization modal (§2/§9). */}
         <fieldset>
           <legend className="text-xs font-semibold uppercase tracking-[0.15em] text-foreground/60">
-            Color{selectedColorId && `: ${product.colors.find((c) => c.id === selectedColorId)?.name ?? ""}`}
+            Color{browsingColorId && `: ${product.colors.find((c) => c.id === browsingColorId)?.name ?? ""}`}
           </legend>
-          <div className="mt-3 flex flex-wrap gap-4">
+          <div className="mt-2.5 flex flex-wrap gap-3">
             {availableColors.map((color) => {
-              const selected = color.id === selectedColorId;
-              const soldOut = isColorSoldOut(product.variants, color.id);
+              const selected = color.id === browsingColorId;
+              const soldOut = !product.isPreorder && isColorSoldOut(product.variants, color.id);
               return (
                 <button
                   key={color.id}
                   type="button"
-                  onClick={() => handleSelectColor(color.id)}
+                  onClick={() => setBrowsingColorId(color.id)}
                   aria-pressed={selected}
-                  title={soldOut ? `${color.name}, sold out` : color.name}
-                  className="flex flex-col items-center gap-1.5"
+                  title={color.name}
+                  className="relative flex h-9 w-9 items-center justify-center"
                 >
                   <span
-                    className={`relative flex h-11 w-11 items-center justify-center border-2 transition-colors ${
-                      selected ? "border-ink" : "border-transparent"
+                    className={`h-7 w-7 rounded-full border ${soldOut ? "opacity-35" : ""} ${
+                      selected ? "ring-2 ring-foreground ring-offset-2 ring-offset-background" : "border-line"
                     }`}
-                  >
-                    <span
-                      className={`h-8 w-8 rounded-full border border-line ${soldOut ? "opacity-35" : ""}`}
-                      style={{ backgroundColor: color.hexCode ?? "#ccc" }}
-                    />
-                    {soldOut && (
-                      <span
-                        className="pointer-events-none absolute inset-1 rotate-45 border-t border-ink/40"
-                        aria-hidden
-                      />
-                    )}
-                  </span>
-                  {/* Color is always named in visible text, never conveyed by
-                      swatch color alone (§11). */}
-                  <span
-                    className={`text-[11px] font-medium ${
-                      soldOut ? "text-foreground/30" : selected ? "text-ink" : "text-foreground/60"
-                    }`}
-                  >
-                    {color.name}
-                    {soldOut && " (Sold out)"}
-                  </span>
+                    style={{ backgroundColor: color.hexCode ?? "#ccc" }}
+                  />
+                  <span className="sr-only">{color.name}</span>
                 </button>
               );
             })}
           </div>
         </fieldset>
 
-        {/* Size selection */}
-        <fieldset>
-          <div className="flex items-center justify-between">
-            <legend className="text-xs font-semibold uppercase tracking-[0.15em] text-foreground/60">
-              Size
-            </legend>
-            <SizeGuideDisclosure />
-          </div>
-          <div className="mt-3 grid grid-cols-4 gap-2 sm:flex sm:flex-wrap">
-            {sizeStates.map(({ size, disabled, soldOut }) => {
-              const selected = size.id === selectedSizeId;
-              return (
-                <button
-                  key={size.id}
-                  type="button"
-                  onClick={() => handleSelectSize(size.id)}
-                  disabled={disabled}
-                  aria-pressed={selected}
-                  aria-label={soldOut ? `${size.name}, sold out` : size.name}
-                  className={`relative flex h-12 min-w-14 items-center justify-center border px-3 text-sm font-medium transition-colors ${
-                    selected ? "border-ink bg-ink text-paper" : "border-line"
-                  } ${disabled ? "text-foreground/30" : ""}`}
-                >
-                  {size.name}
-                  {soldOut && (
-                    <span className="pointer-events-none absolute inset-x-1 top-1/2 h-px -translate-y-1/2 bg-current" aria-hidden />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </fieldset>
-
-        {/* Stock state */}
-        <p className="text-sm" role="status">
-          {!selectedSizeId && "Select a size to check availability."}
-          {selectedSizeId && !selectedVariant && "This combination isn't available."}
-          {selectedVariant && isSoldOut && <span className="font-medium text-accent">Sold out</span>}
-          {selectedVariant &&
-            !isSoldOut &&
-            stock !== null &&
-            stock <= 5 && <span className="text-accent">Only {stock} left</span>}
-          {selectedVariant && !isSoldOut && (stock === null || stock > 5) && (
-            <span className="text-foreground/60">In stock</span>
-          )}
-        </p>
-
-        {/* Quantity */}
         <div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.15em] text-foreground/60">Quantity</p>
-          <QuantityInput
-            value={quantity}
-            max={stock !== null ? Math.max(1, Math.min(stock, 10)) : 10}
-            onChange={setQuantity}
-            disabled={!canPurchase}
-          />
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-[0.15em] text-foreground/60">Size</span>
+            <button
+              type="button"
+              onClick={() => setSizeChartOpen(true)}
+              className="text-xs font-medium underline underline-offset-4 text-foreground/60 transition-colors hover:text-foreground"
+            >
+              ดูตารางไซซ์
+            </button>
+          </div>
+          <p className="mt-1 text-xs text-foreground/50">เลือกไซซ์และสีแยกสำหรับเสื้อแต่ละตัวในขั้นตอนถัดไป</p>
         </div>
 
-        {/* Purchase actions */}
-        <div className="flex flex-col gap-3 pb-4 sm:flex-row">
-          <button
-            type="button"
-            onClick={handleAddToCart}
-            disabled={!canPurchase}
-            className="h-14 flex-1 border border-ink text-sm font-semibold uppercase tracking-[0.15em] transition-opacity hover:opacity-70 disabled:cursor-not-allowed disabled:opacity-30"
-          >
-            Add to Cart
-          </button>
-          <button
-            type="button"
-            onClick={handleBuyNow}
-            disabled={!canPurchase}
-            className="h-14 flex-1 bg-ink text-sm font-semibold uppercase tracking-[0.15em] text-paper transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-30"
-          >
-            Buy Now
-          </button>
+        {/* Quantity-first purchase flow (§1) — total shirt count is the
+            main decision here; per-shirt color/size/name/number happens
+            in the customization modal. */}
+        <fieldset>
+          <legend className="text-xs font-semibold uppercase tracking-[0.15em] text-foreground/60">
+            จำนวนเสื้อทั้งหมด
+          </legend>
+          <div className="mt-2.5 inline-flex items-center border border-line" role="group" aria-label="Total quantity">
+            <button
+              type="button"
+              onClick={() => handleQuantityChange(quantity - 1)}
+              disabled={quantity <= 0}
+              aria-label="Decrease total quantity"
+              className="flex h-12 w-12 items-center justify-center text-lg disabled:opacity-30"
+            >
+              −
+            </button>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={quantity}
+              onChange={(e) => {
+                const digits = e.target.value.replace(/[^\d]/g, "");
+                handleQuantityChange(digits === "" ? 0 : Number.parseInt(digits, 10));
+              }}
+              aria-label="Total quantity"
+              className="h-12 w-16 border-x border-line bg-transparent text-center text-base font-medium tabular-nums outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => handleQuantityChange(quantity + 1)}
+              aria-label="Increase total quantity"
+              className="flex h-12 w-12 items-center justify-center text-lg"
+            >
+              +
+            </button>
+          </div>
+        </fieldset>
+
+        {/* Live purchase summary — only once at least one shirt is
+            selected (§12/§1); mirrors the exact tier price/subtotal. */}
+        <div aria-live="polite" className="min-h-[2.5rem]">
+          {quantity > 0 ? (
+            <div className="text-sm">
+              <p className="tabular-nums">
+                {quantity} ตัว · <span className="font-medium">{formatSatangAsThb(unitPriceSatang)}</span> / ตัว
+              </p>
+              <p className="mt-0.5 tabular-nums text-foreground/60">รวมสินค้า {formatSatangAsThb(subtotalSatang)}</p>
+            </div>
+          ) : (
+            <p className="text-xs text-foreground/40">เลือกจำนวนที่ต้องการสั่งซื้อ</p>
+          )}
         </div>
+
+        <button
+          type="button"
+          onClick={openCustomization}
+          disabled={!canOpenCustomization}
+          className="h-14 w-full bg-ink text-sm font-semibold uppercase tracking-[0.15em] text-paper transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-30"
+        >
+          ระบุรายละเอียดเสื้อ{quantity > 0 ? ` · ${quantity} ตัว` : ""}
+        </button>
 
         {feedback && (
           <p role="status" className="text-sm text-foreground/70">
@@ -241,18 +276,18 @@ export function JerseySelector({ product }: { product: JerseyProduct }) {
         )}
 
         {(product.description || product.careInfo) && (
-          <div className="flex flex-col gap-4 border-t border-line pt-6">
+          <div className="flex flex-col border-t border-line pt-2">
             {product.description && (
-              <details open className="text-sm leading-relaxed text-foreground/80">
-                <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.15em] text-foreground/60">
-                  Details
+              <details className="border-b border-line py-3 text-sm leading-relaxed text-foreground/80">
+                <summary className="cursor-pointer list-none text-xs font-semibold uppercase tracking-[0.15em] text-foreground/60">
+                  รายละเอียดสินค้า
                 </summary>
                 <p className="mt-2">{product.description}</p>
               </details>
             )}
             {product.careInfo && (
-              <details className="text-sm leading-relaxed text-foreground/80">
-                <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.15em] text-foreground/60">
+              <details className="border-b border-line py-3 text-sm leading-relaxed text-foreground/80">
+                <summary className="cursor-pointer list-none text-xs font-semibold uppercase tracking-[0.15em] text-foreground/60">
                   Care Information
                 </summary>
                 <p className="mt-2">{product.careInfo}</p>
@@ -262,49 +297,35 @@ export function JerseySelector({ product }: { product: JerseyProduct }) {
         )}
       </div>
 
+      {product.isPreorder && (
+        <PricingModal open={pricingModalOpen} onClose={() => setPricingModalOpen(false)} totalQuantity={quantity} />
+      )}
+      <SizeChartDrawer open={sizeChartOpen} onClose={() => setSizeChartOpen(false)} />
+      <CustomizationModal
+        open={customizeOpen}
+        onClose={() => setCustomizeOpen(false)}
+        drafts={drafts}
+        onDraftsChange={setDrafts}
+        colors={product.colors}
+        sizes={product.sizes}
+        canSave={allDraftsValid(drafts)}
+        onSaveAndAddToCart={handleSaveAndAddToCart}
+        onBuyNow={handleBuyNow}
+      />
+
       {/* Sticky mobile purchase bar */}
-      <div className="fixed inset-x-0 bottom-0 z-30 flex gap-3 border-t border-line bg-background/95 p-3 backdrop-blur sm:hidden">
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-background/95 p-3 backdrop-blur sm:hidden">
         <button
           type="button"
-          onClick={handleAddToCart}
-          disabled={!canPurchase}
-          className="h-12 flex-1 border border-ink text-xs font-semibold uppercase tracking-[0.15em] disabled:opacity-30"
+          onClick={openCustomization}
+          disabled={!canOpenCustomization}
+          className="h-12 w-full bg-ink text-xs font-semibold uppercase tracking-[0.15em] text-paper disabled:opacity-30"
         >
-          Add to Cart
-        </button>
-        <button
-          type="button"
-          onClick={handleBuyNow}
-          disabled={!canPurchase}
-          className="h-12 flex-1 bg-ink text-xs font-semibold uppercase tracking-[0.15em] text-paper disabled:opacity-30"
-        >
-          Buy Now
+          ระบุรายละเอียดเสื้อ{quantity > 0 ? ` · ${quantity} ตัว` : ""}
         </button>
       </div>
       {/* Spacer so the sticky bar never covers content on mobile */}
       <div className="h-20 sm:hidden" aria-hidden />
     </div>
-  );
-}
-
-/**
- * No real garment measurements have been supplied yet — showing fabricated
- * chest/length numbers would mislead a customer into buying the wrong
- * size. Until the owner provides real measurements, this stays a
- * restrained "coming soon" state rather than invented data.
- */
-function SizeGuideDisclosure() {
-  return (
-    <details className="relative">
-      <summary className="cursor-pointer list-none text-xs font-medium uppercase tracking-[0.1em] text-foreground/60 underline underline-offset-4">
-        Size Guide
-      </summary>
-      <div className="absolute right-0 top-full z-10 mt-2 w-64 border border-line bg-background p-4 text-xs shadow-lg">
-        <p className="text-foreground/70">Size measurements coming soon.</p>
-        <p className="mt-2 text-foreground/50">
-          Available sizes: S, M, L, XL. Contact us if you need help choosing.
-        </p>
-      </div>
-    </details>
   );
 }

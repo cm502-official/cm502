@@ -2,7 +2,7 @@ import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { phoneSchema } from "@/lib/validation/checkout";
-import type { OrderConfirmation } from "./get-order-by-token";
+import type { OrderConfirmation, OrderItemCustomization } from "./get-order-by-token";
 
 /**
  * Order-number + phone lookup for /track-order.
@@ -37,7 +37,7 @@ export async function getOrderByOrderNumberAndPhone(
       shipping_methods ( name ),
       addresses ( address_line, subdistrict, district, province, postal_code ),
       customers ( full_name, phone ),
-      order_items ( product_name_snapshot, color_name_snapshot, size_name_snapshot, quantity, unit_price_satang, line_total_satang )
+      order_items ( product_name_snapshot, color_name_snapshot, size_name_snapshot, quantity, unit_price_satang, line_total_satang, customizations )
     `,
     )
     .eq("order_number", orderNumber)
@@ -71,6 +71,7 @@ export async function getOrderByOrderNumberAndPhone(
       quantity: number;
       unit_price_satang: number;
       line_total_satang: number;
+      customizations: OrderItemCustomization[] | null;
     }>;
   };
 
@@ -113,6 +114,7 @@ export async function getOrderByOrderNumberAndPhone(
       quantity: item.quantity,
       unitPriceSatang: item.unit_price_satang,
       lineTotalSatang: item.line_total_satang,
+      customizations: item.customizations,
     })),
   };
 }

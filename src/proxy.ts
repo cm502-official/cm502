@@ -46,7 +46,15 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (request.nextUrl.pathname.startsWith("/admin") && !user) {
+  // The login page itself must stay reachable while unauthenticated —
+  // without this exemption, an anonymous visit to /admin/login redirects
+  // to /admin/login?redirectTo=/admin/login, which is unauthenticated
+  // too, which redirects again, forever (ERR_TOO_MANY_REDIRECTS).
+  if (
+    request.nextUrl.pathname.startsWith("/admin") &&
+    request.nextUrl.pathname !== "/admin/login" &&
+    !user
+  ) {
     const loginUrl = new URL("/admin/login", request.url);
     loginUrl.searchParams.set("redirectTo", request.nextUrl.pathname);
     return NextResponse.redirect(loginUrl);

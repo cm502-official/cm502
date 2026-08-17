@@ -4,18 +4,26 @@ import { useState } from "react";
 import Image from "next/image";
 import type { CartItem } from "@/lib/cart/schema";
 import { formatSatangAsThb } from "@/lib/money";
-import { QuantityInput } from "@/components/ui/quantity-input";
 
 export function CartItemRow({
   item,
-  onQuantityChange,
+  unitPriceSatang,
+  onEdit,
   onRemove,
 }: {
   item: CartItem;
-  onQuantityChange: (quantity: number) => void;
+  /**
+   * Combined-cart tier price (§ jersey-tiers), passed down from the cart
+   * page rather than read off `item.unitPriceSatang` directly — the
+   * store already keeps that field in sync after every mutation, but
+   * this line never has to assume that; it always renders whatever the
+   * cart page just computed from the live total quantity.
+   */
+  unitPriceSatang: number;
+  onEdit: () => void;
   onRemove: () => void;
 }) {
-  const lineTotal = item.unitPriceSatang * item.quantity;
+  const lineTotal = unitPriceSatang * item.quantity;
   // A bad/expired image URL must never surface a broken-image icon — fall
   // back to the same plain CM502 placeholder used when there's no image
   // at all.
@@ -45,18 +53,34 @@ export function CartItemRow({
           <div>
             <p className="text-sm font-medium">{item.productName}</p>
             <p className="text-xs text-foreground/60">
-              {item.colorName} / {item.sizeName}
+              {item.colorName} / {item.sizeName} · {item.quantity} ตัว
             </p>
           </div>
           <p className="text-sm font-medium tabular-nums">{formatSatangAsThb(lineTotal)}</p>
         </div>
 
         <p className="text-xs text-foreground/50 tabular-nums">
-          {formatSatangAsThb(item.unitPriceSatang)} each
+          {formatSatangAsThb(unitPriceSatang)} each
         </p>
 
-        <div className="mt-2 flex items-center justify-between">
-          <QuantityInput value={item.quantity} max={10} onChange={onQuantityChange} />
+        {/* Per-shirt personalization (§17) — the data stays individual
+            even though the line is grouped by variant for display. */}
+        <ol className="mt-1.5 flex flex-col gap-0.5 text-xs text-foreground/70">
+          {item.customizations.map((c, index) => (
+            <li key={index} className="tabular-nums">
+              {index + 1}. {c.name ?? "ไม่ระบุชื่อ"} · #{c.number ?? "ไม่ระบุเบอร์"}
+            </li>
+          ))}
+        </ol>
+
+        <div className="mt-2 flex items-center gap-4">
+          <button
+            type="button"
+            onClick={onEdit}
+            className="text-xs font-medium uppercase tracking-wide text-foreground/70 underline underline-offset-4 transition-colors hover:text-foreground"
+          >
+            แก้ไขรายละเอียดเสื้อ
+          </button>
           <button
             type="button"
             onClick={onRemove}

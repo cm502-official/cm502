@@ -50,6 +50,14 @@ export interface JerseyProduct {
   description: string | null;
   careInfo: string | null;
   basePriceSatang: number;
+  /**
+   * Preorder products (see 0014_jersey_preorder_tier_pricing.sql) are
+   * priced by quantity tier (src/lib/pricing/jersey-tiers.ts) instead of
+   * a flat per-variant price, and are never blocked by stock — every
+   * `Variant.availableStock` on a preorder product's variants is null
+   * (unknown/unlimited) by construction of get_active_variant_stock().
+   */
+  isPreorder: boolean;
   colors: Color[];
   sizes: Size[];
   variants: Variant[];

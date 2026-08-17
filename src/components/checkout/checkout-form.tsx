@@ -6,12 +6,13 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCart } from "@/lib/cart/use-cart";
 import { clearCart } from "@/lib/cart/store";
-import { getBuyNowItem, clearBuyNowItem } from "@/lib/cart/buy-now";
+import { getBuyNowItems, clearBuyNowItems } from "@/lib/cart/buy-now";
 import type { CartItem } from "@/lib/cart/schema";
 import { addSatang, formatSatangAsThb } from "@/lib/money";
 import { addressSchema, customerSchema } from "@/lib/validation/checkout";
 import type { ShippingMethod } from "@/lib/shipping/get-shipping-methods";
 import { ORDER_ERROR_MESSAGES, type OrderErrorCode } from "@/lib/orders/errors";
+import { calculateJerseySubtotalSatang, getJerseyUnitPriceSatang } from "@/lib/pricing/jersey-tiers";
 
 interface FormState {
   fullName: string;
@@ -48,7 +49,7 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
 
   const [hydrated, setHydrated] = useState(false);
   const [source, setSource] = useState<"buyNow" | "cart">("cart");
-  const [buyNowItem, setBuyNowItemState] = useState<CartItem | null>(null);
+  const [buyNowItems, setBuyNowItemsState] = useState<CartItem[] | null>(null);
 
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -64,9 +65,9 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
   // (exactly what effects are for), not state derived from props/state.
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    const item = getBuyNowItem();
-    if (item) {
-      setBuyNowItemState(item);
+    const items = getBuyNowItems();
+    if (items && items.length > 0) {
+      setBuyNowItemsState(items);
       setSource("buyNow");
     } else {
       setSource("cart");
@@ -76,14 +77,20 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const items: CartItem[] = useMemo(
-    () => (source === "buyNow" && buyNowItem ? [buyNowItem] : cart.items),
-    [source, buyNowItem, cart.items],
+    () => (source === "buyNow" && buyNowItems ? buyNowItems : cart.items),
+    [source, buyNowItems, cart.items],
   );
 
-  const subtotalSatang = useMemo(
-    () => items.reduce((sum, i) => sum + i.unitPriceSatang * i.quantity, 0),
-    [items],
-  );
+  // Quantity-tier pricing (§ jersey-tiers): the checkout total is
+  // recomputed from the combined quantity across every line, not summed
+  // from each line's stored unitPriceSatang — that keeps the number the
+  // customer sees in lockstep with the server's authoritative
+  // calculation even if a stale per-line price ever slipped through.
+  // The server independently recomputes this at order-creation time
+  // regardless (§ server-authoritative pricing) — this is display only.
+  const totalQuantity = useMemo(() => items.reduce((sum, i) => sum + i.quantity, 0), [items]);
+  const unitPriceSatang = useMemo(() => getJerseyUnitPriceSatang(totalQuantity), [totalQuantity]);
+  const subtotalSatang = useMemo(() => calculateJerseySubtotalSatang(totalQuantity), [totalQuantity]);
   const shippingMethod = shippingMethods.find((m) => m.id === shippingMethodId) ?? null;
   const shippingSatang = shippingMethod?.priceSatang ?? 0;
   const totalSatang = addSatang(subtotalSatang, shippingSatang);
@@ -152,7 +159,11 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           idempotencyKey: idempotencyKeyRef.current,
-          items: items.map((i) => ({ variantId: i.variantId, quantity: i.quantity })),
+          items: items.map((i) => ({
+            variantId: i.variantId,
+            quantity: i.quantity,
+            customizations: i.customizations,
+          })),
           customer: {
             fullName: form.fullName,
             phone: form.phone,
@@ -180,7 +191,7 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
       }
 
       if (source === "buyNow") {
-        clearBuyNowItem();
+        clearBuyNowItems();
       } else {
         clearCart();
       }
@@ -212,7 +223,14 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
 
   return (
     <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-10">
-      <OrderSummary items={items} subtotalSatang={subtotalSatang} shippingSatang={shippingMethod ? shippingSatang : null} totalSatang={totalSatang} />
+      <OrderSummary
+        items={items}
+        totalQuantity={totalQuantity}
+        unitPriceSatang={unitPriceSatang}
+        subtotalSatang={subtotalSatang}
+        shippingSatang={shippingMethod ? shippingSatang : null}
+        totalSatang={totalSatang}
+      />
 
       <fieldset className="flex flex-col gap-4">
         <legend className="text-xs font-semibold uppercase tracking-[0.15em] text-foreground/60">
@@ -323,11 +341,15 @@ function CheckoutItemThumbnail({ item }: { item: CartItem }) {
 
 function OrderSummary({
   items,
+  totalQuantity,
+  unitPriceSatang,
   subtotalSatang,
   shippingSatang,
   totalSatang,
 }: {
   items: CartItem[];
+  totalQuantity: number;
+  unitPriceSatang: number;
   subtotalSatang: number;
   shippingSatang: number | null;
   totalSatang: number;
@@ -336,32 +358,57 @@ function OrderSummary({
     <div className="border border-line p-5">
       <ul className="flex flex-col gap-3">
         {items.map((item) => (
-          <li key={item.variantId} className="flex items-center gap-3 text-sm">
+          <li key={item.variantId} className="flex gap-3 text-sm">
             <CheckoutItemThumbnail item={item} />
-            <span className="flex-1">
-              {item.productName}
-              <span className="text-foreground/60">
-                {" "}
-                — {item.colorName} / {item.sizeName} × {item.quantity}
-              </span>
-            </span>
-            <span className="tabular-nums">{formatSatangAsThb(item.unitPriceSatang * item.quantity)}</span>
+            <div className="flex-1">
+              <div className="flex items-start justify-between gap-3">
+                <span>
+                  {item.productName}
+                  <span className="text-foreground/60">
+                    {" "}
+                    — {item.colorName} / {item.sizeName} × {item.quantity}
+                  </span>
+                </span>
+                <span className="flex-none tabular-nums">{formatSatangAsThb(unitPriceSatang * item.quantity)}</span>
+              </div>
+              {/* Per-shirt personalization preserved through checkout (§20). */}
+              <ol className="mt-1 flex flex-col gap-0.5 text-xs text-foreground/60">
+                {item.customizations.map((c, index) => (
+                  <li key={index}>
+                    - {c.name ?? "ไม่ระบุชื่อ"} · #{c.number ?? "ไม่ระบุเบอร์"}
+                  </li>
+                ))}
+              </ol>
+            </div>
           </li>
         ))}
       </ul>
+      {/* Quantity-tier breakdown (§5) — total shirt count across every
+          size/color line, the tier price it unlocks, and the resulting
+          product subtotal, shown before shipping/total. */}
+      <div className="mt-4 flex flex-col gap-1 border-t border-line pt-4 text-sm">
+        <div className="flex justify-between">
+          <span className="text-foreground/60">จำนวนเสื้อทั้งหมด</span>
+          <span className="tabular-nums">{totalQuantity} ตัว</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-foreground/60">ราคาต่อชิ้น</span>
+          <span className="tabular-nums">{formatSatangAsThb(unitPriceSatang)}</span>
+        </div>
+      </div>
       <div className="mt-4 flex flex-col gap-1.5 border-t border-line pt-4 text-sm">
         <div className="flex justify-between">
-          <span className="text-foreground/60">Subtotal</span>
+          <span className="text-foreground/60">ยอดรวมสินค้า</span>
           <span className="tabular-nums">{formatSatangAsThb(subtotalSatang)}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-foreground/60">Shipping</span>
+          <span className="text-foreground/60">ค่าจัดส่ง</span>
           <span className="tabular-nums">
             {shippingSatang !== null ? formatSatangAsThb(shippingSatang) : "Select a method"}
           </span>
         </div>
         <div className="mt-1 flex justify-between border-t border-line pt-2 text-base font-semibold">
-          <span>Total</span>
+          <span>ยอดชำระทั้งหมด</span>
           <span className="tabular-nums">{formatSatangAsThb(totalSatang)}</span>
         </div>
       </div>

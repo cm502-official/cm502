@@ -2,6 +2,12 @@ import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 
+/** One physical shirt's printed name/number — null on either field means "not printed". */
+export interface OrderItemCustomization {
+  name: string | null;
+  number: string | null;
+}
+
 export interface OrderConfirmation {
   orderNumber: string;
   paymentStatus: string;
@@ -27,6 +33,12 @@ export interface OrderConfirmation {
     quantity: number;
     unitPriceSatang: number;
     lineTotalSatang: number;
+    /**
+     * One entry per physical shirt, in production order — saved at
+     * checkout time (§21/§24), never recomputed from live catalog/cart
+     * state. Null on orders placed before personalization existed.
+     */
+    customizations: OrderItemCustomization[] | null;
   }>;
 }
 
@@ -62,7 +74,7 @@ export async function getOrderByTrackingToken(token: string): Promise<OrderConfi
       shipping_methods ( name ),
       addresses ( address_line, subdistrict, district, province, postal_code ),
       customers ( full_name ),
-      order_items ( product_name_snapshot, color_name_snapshot, size_name_snapshot, quantity, unit_price_satang, line_total_satang )
+      order_items ( product_name_snapshot, color_name_snapshot, size_name_snapshot, quantity, unit_price_satang, line_total_satang, customizations )
     `,
     )
     .eq("tracking_token", token)
@@ -95,6 +107,7 @@ export async function getOrderByTrackingToken(token: string): Promise<OrderConfi
       quantity: number;
       unit_price_satang: number;
       line_total_satang: number;
+      customizations: OrderItemCustomization[] | null;
     }>;
   };
 
@@ -125,6 +138,7 @@ export async function getOrderByTrackingToken(token: string): Promise<OrderConfi
       quantity: item.quantity,
       unitPriceSatang: item.unit_price_satang,
       lineTotalSatang: item.line_total_satang,
+      customizations: item.customizations,
     })),
   };
 }

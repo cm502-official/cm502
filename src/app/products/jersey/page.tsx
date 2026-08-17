@@ -35,7 +35,7 @@ export default async function JerseyProductPage() {
   };
 
   return (
-    <section className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-16">
+    <section className="mx-auto max-w-[1440px] px-4 py-8 md:px-8 lg:px-10 sm:py-16">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}

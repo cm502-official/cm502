@@ -39,7 +39,11 @@ export function ProductGallery({ images, productName }: { images: ProductImage[]
   return (
     <div className="flex flex-col gap-3 sm:flex-row-reverse sm:gap-4">
       <div
-        className="flex aspect-[4/5] w-full snap-x snap-mandatory gap-0 overflow-x-auto sm:aspect-[4/5]"
+        // Mobile keeps a portrait aspect ratio (stacked layout has room).
+        // Desktop switches to an explicit height instead of scaling with
+        // aspect-ratio, so a wide left column never turns into a very
+        // tall media block — capped well under 75vh at every breakpoint.
+        className="flex aspect-[4/5] w-full snap-x snap-mandatory gap-0 overflow-x-auto lg:aspect-auto lg:h-[620px] xl:h-[700px] 2xl:h-[740px]"
         onScroll={(e) => {
           const el = e.currentTarget;
           const index = Math.round(el.scrollLeft / el.clientWidth);
@@ -54,7 +58,7 @@ export function ProductGallery({ images, productName }: { images: ProductImage[]
           ) : (
             <div
               key={image.id}
-              className="relative w-full flex-none snap-center bg-paper-dim p-3 sm:p-6 lg:p-10"
+              className="relative w-full flex-none snap-center bg-paper-dim p-3 sm:p-6 lg:p-8"
             >
               {/* object-contain (not cover) so the full garment is always
                   visible with breathing room — a cropped, oversized shirt
@@ -113,7 +117,7 @@ export function ProductGallery({ images, productName }: { images: ProductImage[]
 function PlaceholderGallery({ productName }: { productName: string }) {
   return (
     <div
-      className="relative flex aspect-[4/5] w-full flex-col items-center justify-center gap-3 border border-line bg-paper-dim"
+      className="relative flex aspect-[4/5] w-full flex-col items-center justify-center gap-3 border border-line bg-paper-dim lg:aspect-auto lg:h-[620px] xl:h-[700px] 2xl:h-[740px]"
       role="img"
       aria-label={`${productName} — product photography coming soon`}
     >

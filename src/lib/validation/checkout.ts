@@ -5,8 +5,13 @@
  */
 import { z } from "zod";
 
-const MAX_QUANTITY_PER_LINE = 10;
-const MAX_LINES_PER_ORDER = 20;
+// The jersey is sold as unlimited preorder (§ create_order_with_reservation
+// preorder bypass) — these are no longer stock-derived caps, just a sane
+// ceiling against malformed/adversarial input (integer overflow, a typo
+// with an extra zero, etc.), not a real business limit. Kept well above
+// any realistic bulk preorder (hundreds of shirts).
+const MAX_QUANTITY_PER_LINE = 100000;
+const MAX_LINES_PER_ORDER = 100;
 
 function normalizePhone(raw: string): string {
   return raw.replace(/[\s-]/g, "");
@@ -62,14 +67,43 @@ export const addressSchema = z.object({
   postalCode: postalCodeSchema,
 });
 
-export const cartLineSchema = z.object({
-  variantId: z.string().uuid("Invalid item"),
-  quantity: z
-    .number()
-    .int("Quantity must be a whole number")
-    .min(1, "Quantity must be at least 1")
-    .max(MAX_QUANTITY_PER_LINE, `Quantity can't exceed ${MAX_QUANTITY_PER_LINE} per item`),
+// Per-shirt personalization (§ shirt customization) — the actual
+// server-trusted boundary for name/number printing data. React-side
+// validation (shirt-draft.ts) exists for fast feedback only; this is
+// what /api/orders actually enforces.
+const NAME_MAX_LENGTH = 15;
+const JERSEY_NUMBER_REGEX = /^\d{1,2}$/;
+
+export const shirtCustomizationSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(NAME_MAX_LENGTH, `Name must be ${NAME_MAX_LENGTH} characters or fewer`)
+    .nullable(),
+  number: z
+    .string()
+    .regex(JERSEY_NUMBER_REGEX, "Number must be 0-99")
+    .nullable(),
 });
+
+export const cartLineSchema = z
+  .object({
+    variantId: z.string().uuid("Invalid item"),
+    quantity: z
+      .number()
+      .int("Quantity must be a whole number")
+      .min(1, "Quantity must be at least 1")
+      .max(MAX_QUANTITY_PER_LINE, `Quantity can't exceed ${MAX_QUANTITY_PER_LINE} per item`),
+    // One entry per physical shirt — must exactly match `quantity`
+    // (§22: "customization count matches quantity" is a required
+    // server-side check, not just a client convenience).
+    customizations: z.array(shirtCustomizationSchema).min(1),
+  })
+  .refine((line) => line.customizations.length === line.quantity, {
+    message: "customizations.length must equal quantity",
+    path: ["customizations"],
+  });
 
 export const createOrderRequestSchema = z.object({
   idempotencyKey: z.string().trim().min(1).max(100),

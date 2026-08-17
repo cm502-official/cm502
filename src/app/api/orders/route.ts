@@ -47,7 +47,11 @@ export async function POST(request: Request) {
 
   const { data, error } = await admin.rpc("create_order_with_reservation", {
     p_idempotency_key: req.idempotencyKey,
-    p_items: req.items.map((item) => ({ variant_id: item.variantId, quantity: item.quantity })),
+    p_items: req.items.map((item) => ({
+      variant_id: item.variantId,
+      quantity: item.quantity,
+      customizations: item.customizations,
+    })),
     p_customer: {
       full_name: req.customer.fullName,
       phone: req.customer.phone,

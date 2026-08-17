@@ -33,7 +33,7 @@ async function loadJerseyProduct(): Promise<JerseyProduct | null> {
 
   const { data: product, error: productError } = await supabase
     .from("products")
-    .select("id, slug, name, description, care_info, base_price_satang")
+    .select("id, slug, name, description, care_info, base_price_satang, is_preorder")
     .eq("slug", "jersey")
     .eq("is_active", true)
     .maybeSingle();
@@ -56,8 +56,8 @@ async function loadJerseyProduct(): Promise<JerseyProduct | null> {
       supabase.rpc("get_active_variant_stock", { p_product_id: product.id }),
     ]);
 
-  const stockByVariant = new Map<string, number>(
-    (stockRows ?? []).map((row: { variant_id: string; available_stock: number }) => [
+  const stockByVariant = new Map<string, number | null>(
+    (stockRows ?? []).map((row: { variant_id: string; available_stock: number | null }) => [
       row.variant_id,
       row.available_stock,
     ]),
@@ -72,6 +72,7 @@ async function loadJerseyProduct(): Promise<JerseyProduct | null> {
     description: product.description,
     careInfo: product.care_info,
     basePriceSatang: product.base_price_satang,
+    isPreorder: product.is_preorder ?? false,
     colors: (colors ?? []).map((c) => ({
       id: c.id,
       name: c.name,

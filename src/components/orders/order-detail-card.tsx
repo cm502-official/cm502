@@ -73,18 +73,50 @@ export function OrderDetailCard({
         <h2 className="text-xs font-semibold uppercase tracking-[0.15em] text-foreground/60">Items</h2>
         <ul className="mt-3 flex flex-col gap-3">
           {order.items.map((item, index) => (
-            <li key={index} className="flex flex-col gap-0.5 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-              <span className="min-w-0">
-                {item.productName}
-                <span className="text-foreground/60">
-                  {" "}
-                  — {item.colorName} / {item.sizeName} × {item.quantity}
+            <li key={index} className="flex flex-col gap-1.5 text-sm">
+              <div className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                <span className="min-w-0">
+                  {item.productName}
+                  <span className="text-foreground/60">
+                    {" "}
+                    — {item.colorName} / {item.sizeName} × {item.quantity}
+                  </span>
                 </span>
-              </span>
-              <span className="flex-none tabular-nums">{formatSatangAsThb(item.lineTotalSatang)}</span>
+                <span className="flex-none tabular-nums">{formatSatangAsThb(item.lineTotalSatang)}</span>
+              </div>
+              {/* Per-shirt personalization (§24) — from this order's
+                  saved snapshot, never recomputed from live cart/catalog
+                  state. Absent entirely on orders placed before
+                  personalization existed. */}
+              {item.customizations && item.customizations.length > 0 && (
+                <ol className="flex flex-col gap-0.5 pl-1 text-xs text-foreground/60">
+                  {item.customizations.map((c, i) => (
+                    <li key={i}>
+                      ตัวที่ {i + 1}: {c.name ?? "ไม่ระบุชื่อ"} · #{c.number ?? "ไม่ระบุเบอร์"}
+                    </li>
+                  ))}
+                </ol>
+              )}
             </li>
           ))}
         </ul>
+        {/*
+          Total shirt quantity + the unit price actually paid — read
+          straight from this order's saved unit_price_satang/quantity
+          snapshot (order_items), never recomputed from today's live
+          quantity tiers. If pricing tiers change later, past orders keep
+          showing exactly what the customer paid at the time (§13).
+        */}
+        {order.items.length > 0 && (
+          <div className="mt-3 flex items-center justify-between border-t border-line pt-3 text-xs text-foreground/60">
+            <span>
+              {order.items.reduce((sum, i) => sum + i.quantity, 0)} shirt(s) total
+            </span>
+            <span className="tabular-nums">
+              {formatSatangAsThb(order.items[0].unitPriceSatang)} / shirt
+            </span>
+          </div>
+        )}
       </div>
 
       {order.shippingAddress && (

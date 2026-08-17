@@ -15,7 +15,16 @@ const SHIPPING_METHOD_ID = "3fa85f64-5717-4562-b3fc-2c963f66afa7";
 
 const validPayload = {
   idempotencyKey: "key-1",
-  items: [{ variantId: VARIANT_ID, quantity: 2 }],
+  items: [
+    {
+      variantId: VARIANT_ID,
+      quantity: 2,
+      customizations: [
+        { name: "LUCIFER", number: "88" },
+        { name: null, number: null },
+      ],
+    },
+  ],
   customer: { fullName: "Somchai Jaidee", phone: "0812345678" },
   address: {
     addressLine: "123/45 Sukhumvit Rd.",
@@ -73,6 +82,39 @@ describe("POST /api/orders — request validation", () => {
     expect(res.status).toBe(400);
     expect(rpcMock).not.toHaveBeenCalled();
   });
+
+  it("rejects a customization count mismatch (§22) before calling the database", async () => {
+    const res = await POST(
+      makeRequest({
+        ...validPayload,
+        items: [{ variantId: VARIANT_ID, quantity: 3, customizations: [{ name: null, number: null }] }],
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid jersey number before calling the database", async () => {
+    const res = await POST(
+      makeRequest({
+        ...validPayload,
+        items: [{ variantId: VARIANT_ID, quantity: 1, customizations: [{ name: null, number: "100" }] }],
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a name longer than 15 characters before calling the database", async () => {
+    const res = await POST(
+      makeRequest({
+        ...validPayload,
+        items: [{ variantId: VARIANT_ID, quantity: 1, customizations: [{ name: "A".repeat(16), number: null }] }],
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("POST /api/orders — server is the sole source of pricing", () => {
@@ -82,7 +124,18 @@ describe("POST /api/orders — server is the sole source of pricing", () => {
     // An adversarial client stuffs price fields into every place it can.
     const payloadWithInjectedPrices = {
       ...validPayload,
-      items: [{ variantId: VARIANT_ID, quantity: 2, unitPriceSatang: 1, lineTotalSatang: 1 }],
+      items: [
+        {
+          variantId: VARIANT_ID,
+          quantity: 2,
+          customizations: [
+            { name: "LUCIFER", number: "88" },
+            { name: null, number: null },
+          ],
+          unitPriceSatang: 1,
+          lineTotalSatang: 1,
+        },
+      ],
       subtotalSatang: 1,
       shippingSatang: 1,
       totalSatang: 1,
@@ -98,7 +151,16 @@ describe("POST /api/orders — server is the sole source of pricing", () => {
     expect(rpcArgs).not.toHaveProperty("p_shipping_satang");
 
     const items = rpcArgs.p_items as Array<Record<string, unknown>>;
-    expect(items).toEqual([{ variant_id: VARIANT_ID, quantity: 2 }]);
+    expect(items).toEqual([
+      {
+        variant_id: VARIANT_ID,
+        quantity: 2,
+        customizations: [
+          { name: "LUCIFER", number: "88" },
+          { name: null, number: null },
+        ],
+      },
+    ]);
     expect(items[0]).not.toHaveProperty("unitPriceSatang");
     expect(items[0]).not.toHaveProperty("lineTotalSatang");
   });
