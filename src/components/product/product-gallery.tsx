@@ -52,13 +52,19 @@ export function ProductGallery({ images, productName }: { images: ProductImage[]
               <PlaceholderGallery productName={productName} />
             </div>
           ) : (
-            <div key={image.id} className="relative w-full flex-none snap-center bg-paper-dim">
+            <div
+              key={image.id}
+              className="relative w-full flex-none snap-center bg-paper-dim p-3 sm:p-6 lg:p-10"
+            >
+              {/* object-contain (not cover) so the full garment is always
+                  visible with breathing room — a cropped, oversized shirt
+                  reads as low-budget on a premium storefront. */}
               <Image
                 src={image.url}
                 alt={image.altText || `${productName} — image ${index + 1}`}
                 fill
                 sizes="(min-width: 640px) 50vw, 100vw"
-                className="object-cover"
+                className="object-contain object-center"
                 priority={index === 0}
                 onError={() => markFailed(image.id)}
               />
@@ -85,14 +91,16 @@ export function ProductGallery({ images, productName }: { images: ProductImage[]
                   CM502
                 </span>
               ) : (
-                <Image
-                  src={image.url}
-                  alt=""
-                  fill
-                  sizes="80px"
-                  className="object-cover"
-                  onError={() => markFailed(image.id)}
-                />
+                <span className="absolute inset-0 bg-paper-dim p-1.5">
+                  <Image
+                    src={image.url}
+                    alt=""
+                    fill
+                    sizes="80px"
+                    className="object-contain object-center"
+                    onError={() => markFailed(image.id)}
+                  />
+                </span>
               )}
             </button>
           ))}
