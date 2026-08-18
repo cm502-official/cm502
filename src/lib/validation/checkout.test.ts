@@ -15,6 +15,17 @@ function customizations(n: number) {
   return Array.from({ length: n }, () => ({ ...BLANK }));
 }
 
+// เชียงใหม่ → เมืองเชียงใหม่ → สุเทพ → 50200 — the exact task-brief example,
+// used as the known-good Thai address fixture throughout.
+const VALID_ADDRESS = {
+  addressLine: "123/45",
+  soiRoad: "ซอย 5",
+  provinceId: 38,
+  districtId: 5001,
+  subdistrictId: 500108,
+  postalCode: "50200",
+};
+
 describe("phoneSchema", () => {
   it("accepts common Thai mobile formats", () => {
     expect(phoneSchema.parse("0812345678")).toBe("0812345678");
@@ -29,20 +40,28 @@ describe("phoneSchema", () => {
     expect(phoneSchema.safeParse("not a phone").success).toBe(false);
     expect(phoneSchema.safeParse("").success).toBe(false);
   });
+
+  it("shows a Thai validation message", () => {
+    const result = phoneSchema.safeParse("123");
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.message).toBe("กรุณากรอกเบอร์โทรศัพท์ให้ถูกต้อง");
+  });
 });
 
 describe("emailSchema", () => {
-  it("is optional", () => {
-    expect(emailSchema.parse("")).toBeUndefined();
-    expect(emailSchema.parse(undefined)).toBeUndefined();
+  it("is required", () => {
+    expect(emailSchema.safeParse("").success).toBe(false);
+    expect(emailSchema.safeParse(undefined).success).toBe(false);
   });
 
   it("validates a supplied email", () => {
     expect(emailSchema.parse("a@example.com")).toBe("a@example.com");
   });
 
-  it("rejects an invalid supplied email", () => {
-    expect(emailSchema.safeParse("not-an-email").success).toBe(false);
+  it("rejects an invalid supplied email with a Thai message", () => {
+    const result = emailSchema.safeParse("not-an-email");
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.message).toBe("กรุณากรอกอีเมลให้ถูกต้อง");
   });
 });
 
@@ -51,7 +70,8 @@ describe("postalCodeSchema", () => {
     expect(postalCodeSchema.parse("10110")).toBe("10110");
   });
 
-  it("rejects wrong length or non-digits", () => {
+  it("rejects wrong length, non-digits, or too many digits", () => {
+    expect(postalCodeSchema.safeParse("123").success).toBe(false);
     expect(postalCodeSchema.safeParse("1011").success).toBe(false);
     expect(postalCodeSchema.safeParse("101100").success).toBe(false);
     expect(postalCodeSchema.safeParse("abcde").success).toBe(false);
@@ -59,14 +79,66 @@ describe("postalCodeSchema", () => {
 });
 
 describe("addressSchema", () => {
-  it("rejects blank-after-trim required fields", () => {
-    const result = addressSchema.safeParse({
-      addressLine: "   ",
-      subdistrict: "Lumphini",
-      district: "Pathum Wan",
-      province: "Bangkok",
-      postalCode: "10330",
-    });
+  it("accepts a complete, legitimate Thai address", () => {
+    const result = addressSchema.safeParse(VALID_ADDRESS);
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts optional soi/road blank", () => {
+    const rest: Partial<typeof VALID_ADDRESS> = { ...VALID_ADDRESS };
+    delete rest.soiRoad;
+    expect(addressSchema.safeParse(rest).success).toBe(true);
+    expect(addressSchema.safeParse({ ...rest, soiRoad: "" }).success).toBe(true);
+  });
+
+  it("accepts optional delivery note blank", () => {
+    expect(addressSchema.safeParse({ ...VALID_ADDRESS, deliveryNote: "" }).success).toBe(true);
+    expect(addressSchema.safeParse(VALID_ADDRESS).success).toBe(true);
+  });
+
+  it("accepts a delivery note within the length limit", () => {
+    const result = addressSchema.safeParse({ ...VALID_ADDRESS, deliveryNote: "ฝากไว้กับ รปภ." });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an oversized delivery note", () => {
+    const result = addressSchema.safeParse({ ...VALID_ADDRESS, deliveryNote: "ก".repeat(201) });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects blank-after-trim address line", () => {
+    const result = addressSchema.safeParse({ ...VALID_ADDRESS, addressLine: "   " });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a missing province", () => {
+    const result = addressSchema.safeParse({ ...VALID_ADDRESS, provinceId: "" });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a missing district", () => {
+    const result = addressSchema.safeParse({ ...VALID_ADDRESS, districtId: "" });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a missing subdistrict", () => {
+    const result = addressSchema.safeParse({ ...VALID_ADDRESS, subdistrictId: "" });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an invalid postcode", () => {
+    expect(addressSchema.safeParse({ ...VALID_ADDRESS, postalCode: "123" }).success).toBe(false);
+    expect(addressSchema.safeParse({ ...VALID_ADDRESS, postalCode: "abcde" }).success).toBe(false);
+    expect(addressSchema.safeParse({ ...VALID_ADDRESS, postalCode: "501000" }).success).toBe(false);
+  });
+
+  it("rejects a subdistrict that doesn't belong to the claimed district (stale selection)", () => {
+    const result = addressSchema.safeParse({ ...VALID_ADDRESS, districtId: 1001 /* a Bangkok district */ });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a postal code that doesn't match the resolved subdistrict", () => {
+    const result = addressSchema.safeParse({ ...VALID_ADDRESS, postalCode: "10110" });
     expect(result.success).toBe(false);
   });
 });
@@ -161,28 +233,23 @@ describe("createOrderRequestSchema — full valid Thai checkout", () => {
       },
     ],
     customer: {
-      fullName: "Somchai Jaidee",
+      fullName: "สมชาย ใจดี",
       phone: "081-234-5678",
       lineId: "somchai_j",
       email: "somchai@example.com",
     },
-    address: {
-      addressLine: "123/45 Sukhumvit Rd.",
-      subdistrict: "Khlong Toei",
-      district: "Khlong Toei",
-      province: "Bangkok",
-      postalCode: "10110",
-    },
+    address: VALID_ADDRESS,
     shippingMethodId: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
   };
 
   it("accepts a valid full payload", () => {
-    expect(createOrderRequestSchema.safeParse(validPayload).success).toBe(true);
+    const result = createOrderRequestSchema.safeParse(validPayload);
+    expect(result.success).toBe(true);
   });
 
-  it("accepts optional fields omitted", () => {
+  it("accepts optional lineId omitted (email stays required)", () => {
     const { customer, ...rest } = validPayload;
-    const payload = { ...rest, customer: { fullName: customer.fullName, phone: customer.phone } };
+    const payload = { ...rest, customer: { fullName: customer.fullName, phone: customer.phone, email: customer.email } };
     expect(createOrderRequestSchema.safeParse(payload).success).toBe(true);
   });
 
@@ -195,7 +262,7 @@ describe("createOrderRequestSchema — full valid Thai checkout", () => {
   it("rejects missing required address fields", () => {
     const payload = {
       ...validPayload,
-      address: { ...validPayload.address, district: "" },
+      address: { ...validPayload.address, districtId: "" },
     };
     expect(createOrderRequestSchema.safeParse(payload).success).toBe(false);
   });
@@ -204,6 +271,22 @@ describe("createOrderRequestSchema — full valid Thai checkout", () => {
     const payload = {
       ...validPayload,
       address: { ...validPayload.address, postalCode: "123" },
+    };
+    expect(createOrderRequestSchema.safeParse(payload).success).toBe(false);
+  });
+
+  it("rejects a malformed administrative combination (hierarchy validation)", () => {
+    const payload = {
+      ...validPayload,
+      address: { ...validPayload.address, provinceId: 1 /* Bangkok, doesn't own subdistrict 500108 */ },
+    };
+    expect(createOrderRequestSchema.safeParse(payload).success).toBe(false);
+  });
+
+  it("rejects a missing email (now required)", () => {
+    const payload = {
+      ...validPayload,
+      customer: { ...validPayload.customer, email: "" },
     };
     expect(createOrderRequestSchema.safeParse(payload).success).toBe(false);
   });
@@ -249,16 +332,8 @@ describe("createOrderRequestSchema — full valid Thai checkout", () => {
 describe("customerSchema / addressSchema exports stay in sync with the full schema", () => {
   it("parse independently the same way", () => {
     expect(
-      customerSchema.safeParse({ fullName: "A", phone: "0812345678" }).success,
+      customerSchema.safeParse({ fullName: "A", phone: "0812345678", email: "a@example.com" }).success,
     ).toBe(true);
-    expect(
-      addressSchema.safeParse({
-        addressLine: "1",
-        subdistrict: "1",
-        district: "1",
-        province: "1",
-        postalCode: "10110",
-      }).success,
-    ).toBe(true);
+    expect(addressSchema.safeParse(VALID_ADDRESS).success).toBe(true);
   });
 });

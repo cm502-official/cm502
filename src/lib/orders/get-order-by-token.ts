@@ -20,10 +20,12 @@ export interface OrderConfirmation {
   shippingMethodName: string | null;
   shippingAddress: {
     addressLine: string;
+    soiRoad: string | null;
     subdistrict: string;
     district: string;
     province: string;
     postalCode: string;
+    deliveryNote: string | null;
   } | null;
   customerName: string | null;
   items: Array<{
@@ -72,7 +74,7 @@ export async function getOrderByTrackingToken(token: string): Promise<OrderConfi
       subtotal_satang, shipping_fee_satang, total_satang,
       reservation_expires_at, created_at,
       shipping_methods ( name ),
-      addresses ( address_line, subdistrict, district, province, postal_code ),
+      addresses ( address_line, soi_road, subdistrict, district, province, postal_code, delivery_note ),
       customers ( full_name ),
       order_items ( product_name_snapshot, color_name_snapshot, size_name_snapshot, quantity, unit_price_satang, line_total_satang, customizations )
     `,
@@ -94,10 +96,12 @@ export async function getOrderByTrackingToken(token: string): Promise<OrderConfi
     shipping_methods: { name: string } | null;
     addresses: {
       address_line: string;
+      soi_road: string | null;
       subdistrict: string;
       district: string;
       province: string;
       postal_code: string;
+      delivery_note: string | null;
     } | null;
     customers: { full_name: string } | null;
     order_items: Array<{
@@ -124,10 +128,12 @@ export async function getOrderByTrackingToken(token: string): Promise<OrderConfi
     shippingAddress: row.addresses
       ? {
           addressLine: row.addresses.address_line,
+          soiRoad: row.addresses.soi_road,
           subdistrict: row.addresses.subdistrict,
           district: row.addresses.district,
           province: row.addresses.province,
           postalCode: row.addresses.postal_code,
+          deliveryNote: row.addresses.delivery_note,
         }
       : null,
     customerName: row.customers?.full_name ?? null,

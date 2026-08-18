@@ -10,6 +10,12 @@ import { getBuyNowItems, clearBuyNowItems } from "@/lib/cart/buy-now";
 import type { CartItem } from "@/lib/cart/schema";
 import { addSatang, formatSatangAsThb } from "@/lib/money";
 import { addressSchema, customerSchema } from "@/lib/validation/checkout";
+import {
+  findSubdistrictById,
+  getDistrictsByProvince,
+  getProvinces,
+  getSubdistrictsByDistrict,
+} from "@/lib/thai-address";
 import type { ShippingMethod } from "@/lib/shipping/get-shipping-methods";
 import { ORDER_ERROR_MESSAGES, type OrderErrorCode } from "@/lib/orders/errors";
 import { calculateJerseySubtotalSatang, getJerseyUnitPriceSatang } from "@/lib/pricing/jersey-tiers";
@@ -20,10 +26,15 @@ interface FormState {
   lineId: string;
   email: string;
   addressLine: string;
-  subdistrict: string;
-  district: string;
-  province: string;
+  soiRoad: string;
+  // Kept as select-driven strings ("" = unselected) — the dataset id,
+  // not free text; canonical Thai names + postal code are resolved
+  // server-side from these (§ thai-address).
+  provinceId: string;
+  districtId: string;
+  subdistrictId: string;
   postalCode: string;
+  deliveryNote: string;
 }
 
 const INITIAL_FORM: FormState = {
@@ -32,10 +43,12 @@ const INITIAL_FORM: FormState = {
   lineId: "",
   email: "",
   addressLine: "",
-  subdistrict: "",
-  district: "",
-  province: "",
+  soiRoad: "",
+  provinceId: "",
+  districtId: "",
+  subdistrictId: "",
   postalCode: "",
+  deliveryNote: "",
 };
 
 function generateIdempotencyKey(): string {
@@ -95,12 +108,67 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
   const shippingSatang = shippingMethod?.priceSatang ?? 0;
   const totalSatang = addSatang(subtotalSatang, shippingSatang);
 
+  // Thai administrative dropdowns (§2) — each list is derived purely
+  // from the currently selected parent id, entirely client-side (no
+  // network request), so a stale child from a previously selected
+  // province/district can never be shown alongside a new parent.
+  const provinces = useMemo(() => getProvinces(), []);
+  const districts = useMemo(
+    () => getDistrictsByProvince(form.provinceId ? Number(form.provinceId) : null),
+    [form.provinceId],
+  );
+  const subdistricts = useMemo(
+    () => getSubdistrictsByDistrict(form.districtId ? Number(form.districtId) : null),
+    [form.districtId],
+  );
+
   function updateField<K extends keyof FormState>(key: K, value: string) {
     setForm((prev) => ({ ...prev, [key]: value }));
     setFieldErrors((prev) => {
       if (!prev[key]) return prev;
       const next = { ...prev };
       delete next[key];
+      return next;
+    });
+  }
+
+  // Changing a parent selector clears every dependent value below it
+  // (§5) — a District/Subdistrict/Postal code left over from a
+  // different Province would silently describe the wrong address.
+  function handleProvinceChange(value: string) {
+    setForm((prev) => ({ ...prev, provinceId: value, districtId: "", subdistrictId: "", postalCode: "" }));
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      delete next.provinceId;
+      delete next.districtId;
+      delete next.subdistrictId;
+      delete next.postalCode;
+      return next;
+    });
+  }
+
+  function handleDistrictChange(value: string) {
+    setForm((prev) => ({ ...prev, districtId: value, subdistrictId: "", postalCode: "" }));
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      delete next.districtId;
+      delete next.subdistrictId;
+      delete next.postalCode;
+      return next;
+    });
+  }
+
+  // Postal code auto-fills from the chosen Subdistrict (§6) — there's no
+  // legitimate reason for it to differ in this dataset (every
+  // subdistrict maps to exactly one zip code), so it's derived here
+  // rather than left independently editable.
+  function handleSubdistrictChange(value: string) {
+    const subdistrict = findSubdistrictById(value ? Number(value) : null);
+    setForm((prev) => ({ ...prev, subdistrictId: value, postalCode: subdistrict?.zipCode ?? "" }));
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      delete next.subdistrictId;
+      delete next.postalCode;
       return next;
     });
   }
@@ -122,19 +190,25 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
 
     const addressResult = addressSchema.safeParse({
       addressLine: form.addressLine,
-      subdistrict: form.subdistrict,
-      district: form.district,
-      province: form.province,
+      soiRoad: form.soiRoad,
+      provinceId: form.provinceId,
+      districtId: form.districtId,
+      subdistrictId: form.subdistrictId,
       postalCode: form.postalCode,
+      deliveryNote: form.deliveryNote,
     });
     if (!addressResult.success) {
       for (const issue of addressResult.error.issues) {
-        errors[String(issue.path[0])] = issue.message;
+        const key = String(issue.path[0]);
+        // Keep the very first message per field (e.g. don't let the
+        // hierarchy refine's message clobber a more specific "select a
+        // subdistrict" one that already fired for the same field).
+        if (!errors[key]) errors[key] = issue.message;
       }
     }
 
     if (!shippingMethodId) {
-      errors.shippingMethodId = "Select a shipping method";
+      errors.shippingMethodId = "กรุณาเลือกวิธีจัดส่ง";
     }
 
     setFieldErrors(errors);
@@ -172,10 +246,12 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
           },
           address: {
             addressLine: form.addressLine,
-            subdistrict: form.subdistrict,
-            district: form.district,
-            province: form.province,
+            soiRoad: form.soiRoad,
+            provinceId: form.provinceId,
+            districtId: form.districtId,
+            subdistrictId: form.subdistrictId,
             postalCode: form.postalCode,
+            deliveryNote: form.deliveryNote,
           },
           shippingMethodId,
         }),
@@ -234,27 +310,131 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
 
       <fieldset className="flex flex-col gap-4">
         <legend className="text-xs font-semibold uppercase tracking-[0.15em] text-foreground/60">
-          Contact
+          ข้อมูลผู้รับ
         </legend>
-        <Field label="Full name" name="fullName" value={form.fullName} onChange={updateField} error={fieldErrors.fullName} required autoComplete="name" />
-        <Field label="Phone number" name="phone" value={form.phone} onChange={updateField} error={fieldErrors.phone} required type="tel" autoComplete="tel" />
-        <Field label="LINE ID (optional)" name="lineId" value={form.lineId} onChange={updateField} error={fieldErrors.lineId} />
-        <Field label="Email (optional)" name="email" value={form.email} onChange={updateField} error={fieldErrors.email} type="email" autoComplete="email" />
+        <Field
+          label="ชื่อ-นามสกุลผู้รับ"
+          name="fullName"
+          value={form.fullName}
+          onChange={updateField}
+          error={fieldErrors.fullName}
+          required
+          autoComplete="name"
+        />
+        <Field
+          label="เบอร์โทรศัพท์"
+          name="phone"
+          value={form.phone}
+          onChange={updateField}
+          error={fieldErrors.phone}
+          required
+          type="tel"
+          inputMode="tel"
+          autoComplete="tel"
+        />
+        <Field label="LINE ID (ถ้ามี)" name="lineId" value={form.lineId} onChange={updateField} error={fieldErrors.lineId} />
+        <Field
+          label="อีเมล"
+          name="email"
+          value={form.email}
+          onChange={updateField}
+          error={fieldErrors.email}
+          required
+          type="email"
+          autoComplete="email"
+        />
       </fieldset>
 
       <fieldset className="flex flex-col gap-4">
         <legend className="text-xs font-semibold uppercase tracking-[0.15em] text-foreground/60">
-          Shipping Address
+          ที่อยู่จัดส่ง
         </legend>
-        <Field label="Address" name="addressLine" value={form.addressLine} onChange={updateField} error={fieldErrors.addressLine} required autoComplete="street-address" />
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Subdistrict" name="subdistrict" value={form.subdistrict} onChange={updateField} error={fieldErrors.subdistrict} required />
-          <Field label="District" name="district" value={form.district} onChange={updateField} error={fieldErrors.district} required />
+        <Field
+          label="บ้านเลขที่ / อาคาร / หมู่บ้าน / ห้อง"
+          name="addressLine"
+          value={form.addressLine}
+          onChange={updateField}
+          error={fieldErrors.addressLine}
+          required
+          autoComplete="street-address"
+        />
+        <Field
+          label="ซอย / ถนน (ถ้ามี)"
+          name="soiRoad"
+          value={form.soiRoad}
+          onChange={updateField}
+          error={fieldErrors.soiRoad}
+        />
+
+        {/* Dependent Thai address selectors (§2): Province → District →
+            Subdistrict → Postal code, entirely client-side, no free text. */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <SelectField
+            label="จังหวัด"
+            placeholder="เลือกจังหวัด"
+            value={form.provinceId}
+            onChange={handleProvinceChange}
+            error={fieldErrors.provinceId}
+            required
+            options={provinces.map((p) => ({ value: String(p.id), label: p.nameTh }))}
+          />
+          <SelectField
+            label="อำเภอ / เขต"
+            placeholder="เลือกอำเภอ / เขต"
+            value={form.districtId}
+            onChange={handleDistrictChange}
+            error={fieldErrors.districtId}
+            required
+            disabled={!form.provinceId}
+            options={districts.map((d) => ({ value: String(d.id), label: d.nameTh }))}
+          />
         </div>
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Province" name="province" value={form.province} onChange={updateField} error={fieldErrors.province} required />
-          <Field label="Postal code" name="postalCode" value={form.postalCode} onChange={updateField} error={fieldErrors.postalCode} required inputMode="numeric" maxLength={5} />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <SelectField
+            label="ตำบล / แขวง"
+            placeholder="เลือกตำบล / แขวง"
+            value={form.subdistrictId}
+            onChange={handleSubdistrictChange}
+            error={fieldErrors.subdistrictId}
+            required
+            disabled={!form.districtId}
+            options={subdistricts.map((s) => ({ value: String(s.id), label: s.nameTh }))}
+          />
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="field-postalCode" className="text-xs font-medium text-foreground/70">
+              รหัสไปรษณีย์
+            </label>
+            <input
+              id="field-postalCode"
+              name="postalCode"
+              value={form.postalCode}
+              readOnly
+              placeholder="กรอกอัตโนมัติ"
+              aria-describedby="field-postalCode-hint"
+              aria-invalid={Boolean(fieldErrors.postalCode)}
+              className={`h-12 cursor-not-allowed border bg-paper-dim px-3 text-sm text-foreground/70 outline-none ${
+                fieldErrors.postalCode ? "border-accent" : "border-line"
+              }`}
+            />
+            {fieldErrors.postalCode ? (
+              <p className="text-xs text-accent">{fieldErrors.postalCode}</p>
+            ) : (
+              <p id="field-postalCode-hint" className="text-xs text-foreground/40">
+                กรอกอัตโนมัติจากตำบล/แขวงที่เลือก
+              </p>
+            )}
+          </div>
         </div>
+
+        <Field
+          label="หมายเหตุสำหรับการจัดส่ง (ถ้ามี)"
+          name="deliveryNote"
+          value={form.deliveryNote}
+          onChange={updateField}
+          error={fieldErrors.deliveryNote}
+          placeholder="เช่น ฝากไว้กับ รปภ. / โทรก่อนจัดส่ง"
+          maxLength={200}
+        />
       </fieldset>
 
       <fieldset className="flex flex-col gap-3">
@@ -427,6 +607,7 @@ function Field({
   autoComplete,
   inputMode,
   maxLength,
+  placeholder,
 }: {
   label: string;
   name: keyof FormState;
@@ -438,6 +619,7 @@ function Field({
   autoComplete?: string;
   inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
   maxLength?: number;
+  placeholder?: string;
 }) {
   const id = `field-${name}`;
   const errorId = `${id}-error`;
@@ -457,12 +639,74 @@ function Field({
         autoComplete={autoComplete}
         inputMode={inputMode}
         maxLength={maxLength}
+        placeholder={placeholder}
         aria-invalid={Boolean(error)}
         aria-describedby={error ? errorId : undefined}
         className={`h-12 border bg-background px-3 text-sm outline-none focus:border-ink ${
           error ? "border-accent" : "border-line"
         }`}
       />
+      {error && (
+        <p id={errorId} className="text-xs text-accent">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The dependent-dropdown control for Province/District/Subdistrict (§2/§5).
+ * Disabled + a distinct placeholder before its parent is chosen, so the
+ * customer can never open a stale/empty list. h-12 matches Field's input
+ * height and keeps every row on the same touch-friendly grid.
+ */
+function SelectField({
+  label,
+  placeholder,
+  value,
+  onChange,
+  error,
+  required,
+  disabled,
+  options,
+}: {
+  label: string;
+  placeholder: string;
+  value: string;
+  onChange: (value: string) => void;
+  error?: string;
+  required?: boolean;
+  disabled?: boolean;
+  options: Array<{ value: string; label: string }>;
+}) {
+  const id = `field-select-${label}`;
+  const errorId = `${id}-error`;
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={id} className="text-xs font-medium text-foreground/70">
+        {label}
+      </label>
+      <select
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        required={required}
+        disabled={disabled}
+        aria-invalid={Boolean(error)}
+        aria-describedby={error ? errorId : undefined}
+        className={`h-12 border bg-background px-3 text-sm outline-none focus:border-ink disabled:cursor-not-allowed disabled:bg-paper-dim disabled:text-foreground/40 ${
+          error ? "border-accent" : "border-line"
+        }`}
+      >
+        <option value="">{placeholder}</option>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
       {error && (
         <p id={errorId} className="text-xs text-accent">
           {error}

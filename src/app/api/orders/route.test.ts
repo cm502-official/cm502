@@ -25,13 +25,15 @@ const validPayload = {
       ],
     },
   ],
-  customer: { fullName: "Somchai Jaidee", phone: "0812345678" },
+  customer: { fullName: "Somchai Jaidee", phone: "0812345678", email: "somchai@example.com" },
+  // เชียงใหม่ → เมืองเชียงใหม่ → สุเทพ → 50200 (task-brief example).
   address: {
-    addressLine: "123/45 Sukhumvit Rd.",
-    subdistrict: "Khlong Toei",
-    district: "Khlong Toei",
-    province: "Bangkok",
-    postalCode: "10110",
+    addressLine: "123/45",
+    soiRoad: "ซอย 5",
+    provinceId: 38,
+    districtId: 5001,
+    subdistrictId: 500108,
+    postalCode: "50200",
   },
   shippingMethodId: SHIPPING_METHOD_ID,
 };
@@ -73,6 +75,23 @@ describe("POST /api/orders — request validation", () => {
 
   it("rejects a request missing required fields, never reaching the database", async () => {
     const res = await POST(makeRequest({ ...validPayload, customer: { fullName: "", phone: "" } }));
+    expect(res.status).toBe(400);
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a request missing the now-required email, never reaching the database", async () => {
+    const res = await POST(
+      makeRequest({ ...validPayload, customer: { fullName: "Somchai Jaidee", phone: "0812345678" } }),
+    );
+    expect(res.status).toBe(400);
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed administrative combination before calling the database", async () => {
+    // Bangkok (id 1) does not own subdistrict 500108 (Suthep, Chiang Mai).
+    const res = await POST(
+      makeRequest({ ...validPayload, address: { ...validPayload.address, provinceId: 1 } }),
+    );
     expect(res.status).toBe(400);
     expect(rpcMock).not.toHaveBeenCalled();
   });
@@ -170,6 +189,46 @@ describe("POST /api/orders — server is the sole source of pricing", () => {
     const res = await POST(makeRequest({ ...validPayload, totalSatang: 1 }));
     const body = await res.json();
     expect(body.order.totalSatang).toBe(84000);
+  });
+});
+
+describe("POST /api/orders — shipping address is forwarded and server-resolved", () => {
+  it("forwards the complete shipping address, resolving canonical names from the selected ids", async () => {
+    rpcMock.mockResolvedValue(makeRpcSuccess());
+    const res = await POST(makeRequest(validPayload));
+    expect(res.status).toBe(201);
+
+    const [, rpcArgs] = rpcMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect(rpcArgs.p_address).toEqual({
+      address_line: "123/45",
+      soi_road: "ซอย 5",
+      subdistrict: "สุเทพ",
+      district: "เมืองเชียงใหม่",
+      province: "เชียงใหม่",
+      postal_code: "50200",
+      delivery_note: "",
+    });
+  });
+
+  it("never trusts client-supplied names — an adversarial mismatched postal code is rejected, not forwarded", async () => {
+    rpcMock.mockResolvedValue(makeRpcSuccess());
+    const res = await POST(
+      makeRequest({ ...validPayload, address: { ...validPayload.address, postalCode: "10110" } }),
+    );
+    expect(res.status).toBe(400);
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it("forwards an optional delivery note when supplied", async () => {
+    rpcMock.mockResolvedValue(makeRpcSuccess());
+    await POST(
+      makeRequest({
+        ...validPayload,
+        address: { ...validPayload.address, deliveryNote: "ฝากไว้กับ รปภ." },
+      }),
+    );
+    const [, rpcArgs] = rpcMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect((rpcArgs.p_address as Record<string, unknown>).delivery_note).toBe("ฝากไว้กับ รปภ.");
   });
 });
 

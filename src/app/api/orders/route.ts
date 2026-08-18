@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createOrderRequestSchema } from "@/lib/validation/checkout";
+import { resolveThaiAddressHierarchy } from "@/lib/thai-address";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getServerEnv } from "@/lib/env";
 import { mapDatabaseErrorCode, ORDER_ERROR_MESSAGES, type OrderErrorCode } from "@/lib/orders/errors";
@@ -27,6 +28,25 @@ export async function POST(request: Request) {
     return errorResponse("VALIDATION_ERROR", 400, firstZodMessage(parsed.error));
   }
   const req = parsed.data;
+
+  // The hierarchy trust boundary (§15): resolve the canonical Thai
+  // province/district/subdistrict names + postal code from ONLY the
+  // selected ids, independently, on the server — never store whatever
+  // text a request happened to include. addressSchema's own refine
+  // already guarantees this resolves (it re-runs the identical check),
+  // so a null here means the request was tampered with between
+  // validation and this point, or the dataset/schema drifted — either
+  // way, never trust the raw address strings that don't exist in the
+  // request shape anyway.
+  const resolvedAddress = resolveThaiAddressHierarchy({
+    provinceId: req.address.provinceId,
+    districtId: req.address.districtId,
+    subdistrictId: req.address.subdistrictId,
+    postalCode: req.address.postalCode,
+  });
+  if (!resolvedAddress) {
+    return errorResponse("VALIDATION_ERROR", 400, "ที่อยู่ไม่ถูกต้อง กรุณาเลือกจังหวัด/อำเภอ/ตำบลใหม่อีกครั้ง");
+  }
 
   let ttlMinutes = 15;
   try {
@@ -60,10 +80,15 @@ export async function POST(request: Request) {
     },
     p_address: {
       address_line: req.address.addressLine,
-      subdistrict: req.address.subdistrict,
-      district: req.address.district,
-      province: req.address.province,
-      postal_code: req.address.postalCode,
+      soi_road: req.address.soiRoad ?? "",
+      // Names/postal code always come from the server-resolved hierarchy,
+      // never from client-submitted text — the request schema doesn't
+      // even carry free-text names anymore (§15).
+      subdistrict: resolvedAddress.subdistrict,
+      district: resolvedAddress.district,
+      province: resolvedAddress.province,
+      postal_code: resolvedAddress.postalCode,
+      delivery_note: req.address.deliveryNote ?? "",
     },
     p_shipping_method_id: req.shippingMethodId,
     p_reservation_ttl_minutes: ttlMinutes,

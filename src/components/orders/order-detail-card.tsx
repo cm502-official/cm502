@@ -125,10 +125,14 @@ export function OrderDetailCard({
           <p className="mt-2 text-sm text-foreground/80">
             {order.customerName}
             <br />
-            {order.shippingAddress.addressLine}, {order.shippingAddress.subdistrict},{" "}
+            {order.shippingAddress.addressLine}
+            {order.shippingAddress.soiRoad ? ` ${order.shippingAddress.soiRoad}` : ""}, {order.shippingAddress.subdistrict},{" "}
             {order.shippingAddress.district}, {order.shippingAddress.province}{" "}
             {order.shippingAddress.postalCode}
           </p>
+          {order.shippingAddress.deliveryNote && (
+            <p className="mt-1 text-xs text-foreground/60">หมายเหตุ: {order.shippingAddress.deliveryNote}</p>
+          )}
           {order.shippingMethodName && <p className="mt-1 text-sm text-foreground/60">{order.shippingMethodName}</p>}
         </div>
       )}
