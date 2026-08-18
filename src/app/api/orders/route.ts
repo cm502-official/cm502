@@ -92,6 +92,10 @@ export async function POST(request: Request) {
     },
     p_shipping_method_id: req.shippingMethodId,
     p_reservation_ttl_minutes: ttlMinutes,
+    // The fee is derived server-side (inside the RPC) from this enum
+    // alone (§K) — the client never sends, and the server never reads,
+    // a numeric shipping price.
+    p_shipping_choice: req.shippingChoice,
   });
 
   if (error) {
@@ -112,6 +116,8 @@ export async function POST(request: Request) {
     tracking_token: string;
     total_satang: number;
     reservation_expires_at: string;
+    shipping_choice: string;
+    shipping_fee_satang: number;
     idempotent_replay: boolean;
   };
 
@@ -122,6 +128,13 @@ export async function POST(request: Request) {
         trackingToken: result.tracking_token,
         totalSatang: result.total_satang,
         reservationExpiresAt: result.reservation_expires_at,
+        // Authoritative — read back from the persisted order, not
+        // echoed from the request, so an idempotent replay always
+        // describes the order exactly as it was first created (§K),
+        // and the checkout UI knows whether it still needs to upload
+        // the 7 proof screenshots for this order.
+        shippingChoice: result.shipping_choice,
+        shippingFeeSatang: result.shipping_fee_satang,
       },
     },
     { status: result.idempotent_replay ? 200 : 201 },

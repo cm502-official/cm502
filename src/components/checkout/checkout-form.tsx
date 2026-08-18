@@ -19,6 +19,18 @@ import {
 import type { ShippingMethod } from "@/lib/shipping/get-shipping-methods";
 import { ORDER_ERROR_MESSAGES, type OrderErrorCode } from "@/lib/orders/errors";
 import { calculateJerseySubtotalSatang, getJerseyUnitPriceSatang } from "@/lib/pricing/jersey-tiers";
+import { PROOF_SLOTS, type ProofType } from "@/lib/shipping-proofs/proof-types";
+import { getShippingFeeSatang, type ShippingChoice } from "@/lib/shipping-proofs/shipping-choice";
+import {
+  compressProofImage,
+  ImageCompressionError,
+  validateOriginalFile,
+} from "@/lib/media/image-compression";
+import {
+  INITIAL_PROOF_SLOT_STATE,
+  ShippingChoiceSection,
+  type ProofSlotState,
+} from "./shipping-choice-section";
 
 interface FormState {
   fullName: string;
@@ -56,6 +68,44 @@ function generateIdempotencyKey(): string {
   return `key-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+/** Internal proof-slot state — extends the display-only ProofSlotState
+ * with the actual compressed blob/mime, which the upload step needs but
+ * the presentational component never touches directly. */
+interface ProofSlotFull extends ProofSlotState {
+  blob: Blob | null;
+  mimeType: string | null;
+}
+
+function createInitialProofState(): Record<ProofType, ProofSlotFull> {
+  return Object.fromEntries(
+    PROOF_SLOTS.map((s) => [s.proofType, { ...INITIAL_PROOF_SLOT_STATE, blob: null, mimeType: null }]),
+  ) as Record<ProofType, ProofSlotFull>;
+}
+
+function originalFileErrorMessage(reason: "empty" | "too_large" | "unsupported_format"): string {
+  switch (reason) {
+    case "empty":
+      return "ไฟล์นี้ว่างเปล่า กรุณาเลือกไฟล์ภาพอื่น";
+    case "too_large":
+      return "ไฟล์มีขนาดใหญ่เกินไป (สูงสุด 15 MB)";
+    case "unsupported_format":
+      return "รองรับเฉพาะไฟล์ JPG, PNG หรือ WEBP เท่านั้น";
+  }
+}
+
+function compressionErrorMessage(reason: string): string {
+  if (reason === "too_large_after_compression") {
+    return "ไม่สามารถบีบอัดรูปให้เล็กพอได้ กรุณาใช้ภาพหน้าจอที่เล็กกว่านี้";
+  }
+  return "ไม่สามารถประมวลผลรูปภาพนี้ได้ กรุณาลองใหม่อีกครั้ง";
+}
+
+function extensionForMime(mimeType: string | null): string {
+  if (mimeType === "image/jpeg") return "jpg";
+  if (mimeType === "image/png") return "png";
+  return "webp";
+}
+
 export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMethod[] }) {
   const router = useRouter();
   const cart = useCart();
@@ -69,6 +119,20 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
   const [shippingMethodId, setShippingMethodId] = useState<string | null>(shippingMethods[0]?.id ?? null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // §B/§K — the effective shipping fee comes entirely from this choice
+  // (getShippingFeeSatang), never from the selected shipping_methods row
+  // — see shipping-choice.ts for why. Starts unselected: the customer
+  // must make a deliberate pick, matching every other required field's
+  // "no default" treatment.
+  const [shippingChoice, setShippingChoice] = useState<ShippingChoice | null>(null);
+  const [proofs, setProofs] = useState<Record<ProofType, ProofSlotFull>>(createInitialProofState);
+  const [proofsSummaryError, setProofsSummaryError] = useState<string | null>(null);
+  // Set once /api/orders has actually created the order — after that,
+  // retrying failed proof uploads must never re-POST /api/orders (§V: no
+  // duplicate order from repeated submits), only re-attempt the missing
+  // uploads against this same order.
+  const [createdOrder, setCreatedOrder] = useState<{ trackingToken: string } | null>(null);
 
   const idempotencyKeyRef = useRef<string>(generateIdempotencyKey());
 
@@ -104,9 +168,13 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
   const totalQuantity = useMemo(() => items.reduce((sum, i) => sum + i.quantity, 0), [items]);
   const unitPriceSatang = useMemo(() => getJerseyUnitPriceSatang(totalQuantity), [totalQuantity]);
   const subtotalSatang = useMemo(() => calculateJerseySubtotalSatang(totalQuantity), [totalQuantity]);
-  const shippingMethod = shippingMethods.find((m) => m.id === shippingMethodId) ?? null;
-  const shippingSatang = shippingMethod?.priceSatang ?? 0;
-  const totalSatang = addSatang(subtotalSatang, shippingSatang);
+  // §K/§L: the CHARGED/displayed fee comes from the shipping-choice
+  // promo, not shippingMethod.priceSatang — a shipping method is still
+  // selected/stored for its name, but no longer prices the order. The
+  // total updates immediately as soon as the customer picks either
+  // option, without waiting for proof uploads to finish (§K).
+  const shippingSatang = shippingChoice ? getShippingFeeSatang(shippingChoice) : null;
+  const totalSatang = addSatang(subtotalSatang, shippingSatang ?? 0);
 
   // Thai administrative dropdowns (§2) — each list is derived purely
   // from the currently selected parent id, entirely client-side (no
@@ -173,6 +241,111 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
     });
   }
 
+  function setProofSlot(proofType: ProofType, patch: Partial<ProofSlotFull>) {
+    setProofs((prev) => ({ ...prev, [proofType]: { ...prev[proofType], ...patch } }));
+    setProofsSummaryError(null);
+  }
+
+  // §F/§H: compress client-side immediately on selection — the customer
+  // sees the (compressed) preview and any error right away, well before
+  // ever submitting the order.
+  async function handleProofFileSelect(proofType: ProofType, file: File) {
+    const previous = proofs[proofType];
+    if (previous.previewUrl) URL.revokeObjectURL(previous.previewUrl);
+
+    const originalCheck = validateOriginalFile(file.size, file.type);
+    if (!originalCheck.valid) {
+      setProofSlot(proofType, {
+        status: "error",
+        previewUrl: null,
+        blob: null,
+        mimeType: null,
+        errorMessage: originalFileErrorMessage(originalCheck.reason),
+      });
+      return;
+    }
+
+    setProofSlot(proofType, { status: "compressing", errorMessage: null });
+    try {
+      const { blob, metadata } = await compressProofImage(file);
+      setProofSlot(proofType, {
+        status: "ready",
+        previewUrl: URL.createObjectURL(blob),
+        blob,
+        mimeType: metadata.mimeType,
+        errorMessage: null,
+      });
+    } catch (err) {
+      const reason = err instanceof ImageCompressionError ? err.reason : "unknown";
+      setProofSlot(proofType, {
+        status: "error",
+        previewUrl: null,
+        blob: null,
+        mimeType: null,
+        errorMessage: compressionErrorMessage(reason),
+      });
+    }
+  }
+
+  function handleProofRemove(proofType: ProofType) {
+    const previous = proofs[proofType];
+    if (previous.previewUrl) URL.revokeObjectURL(previous.previewUrl);
+    setProofSlot(proofType, { ...INITIAL_PROOF_SLOT_STATE, blob: null, mimeType: null });
+  }
+
+  function allProofsReady(current: Record<ProofType, ProofSlotFull>): boolean {
+    return PROOF_SLOTS.every((s) => {
+      const status = current[s.proofType].status;
+      return status === "ready" || status === "uploaded";
+    });
+  }
+
+  // Uploads whichever proofs aren't already marked "uploaded" against an
+  // already-created order (§V/§H) — safe to call again on retry without
+  // ever re-creating the order or re-uploading a slot that already
+  // succeeded.
+  async function uploadPendingProofs(trackingToken: string): Promise<boolean> {
+    let allSucceeded = true;
+
+    for (const slot of PROOF_SLOTS) {
+      const current = proofs[slot.proofType];
+      if (current.status === "uploaded") continue;
+      if (!current.blob) {
+        allSucceeded = false;
+        continue;
+      }
+
+      setProofSlot(slot.proofType, { status: "uploading", errorMessage: null });
+      try {
+        const form = new FormData();
+        form.set("proofType", slot.proofType);
+        form.set("file", current.blob, `${slot.proofType}.${extensionForMime(current.mimeType)}`);
+
+        const res = await fetch(`/api/orders/${trackingToken}/shipping-proofs`, {
+          method: "POST",
+          body: form,
+        });
+        const body = await res.json().catch(() => null);
+
+        if (!res.ok || !body?.uploaded) {
+          allSucceeded = false;
+          setProofSlot(slot.proofType, {
+            status: "error",
+            errorMessage: body?.error?.message ?? "อัปโหลดหลักฐานไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
+          });
+          continue;
+        }
+
+        setProofSlot(slot.proofType, { status: "uploaded", errorMessage: null });
+      } catch {
+        allSucceeded = false;
+        setProofSlot(slot.proofType, { status: "error", errorMessage: "เครือข่ายมีปัญหา กรุณาลองใหม่อีกครั้ง" });
+      }
+    }
+
+    return allSucceeded;
+  }
+
   function validate(): boolean {
     const errors: Record<string, string> = {};
 
@@ -211,13 +384,77 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
       errors.shippingMethodId = "กรุณาเลือกวิธีจัดส่ง";
     }
 
+    if (!shippingChoice) {
+      errors.shippingChoice = "กรุณาเลือกวิธีจัดส่ง";
+    }
+
     setFieldErrors(errors);
-    return Object.keys(errors).length === 0;
+
+    // §Q: free shipping requires exactly all 7 proof categories locally
+    // ready (compressed, not yet necessarily uploaded) before the order
+    // can even be submitted — checked separately from fieldErrors since
+    // it's a summary banner, not one field.
+    let proofsOk = true;
+    if (shippingChoice === "free_social_proof" && !allProofsReady(proofs)) {
+      proofsOk = false;
+      setProofsSummaryError("กรุณาอัปโหลดหลักฐานให้ครบทั้ง 7 รูปเพื่อรับสิทธิ์ส่งฟรี");
+      // Mark exactly which slots are still missing (§Q) — never clobber
+      // a slot that already has its own more specific compression error.
+      setProofs((prev) => {
+        const next = { ...prev };
+        for (const s of PROOF_SLOTS) {
+          const status = next[s.proofType].status;
+          if (status !== "ready" && status !== "uploaded" && status !== "error") {
+            next[s.proofType] = { ...next[s.proofType], errorMessage: "ต้องอัปโหลดหลักฐานนี้" };
+          }
+        }
+        return next;
+      });
+    } else {
+      setProofsSummaryError(null);
+    }
+
+    return Object.keys(errors).length === 0 && proofsOk;
+  }
+
+  function finishAndNavigate(trackingToken: string) {
+    if (source === "buyNow") {
+      clearBuyNowItems();
+    } else {
+      clearCart();
+    }
+    router.push(`/orders/${trackingToken}`);
+  }
+
+  // §V: a partial proof-upload failure must never be silently treated as
+  // a complete free-shipping submission, and must never trigger a second
+  // /api/orders call (which would either double-create or, thanks to
+  // idempotency, harmlessly no-op — but retry should still skip straight
+  // to just the missing uploads rather than repeat the whole request).
+  async function handleRetryUploads() {
+    if (!createdOrder || submitting) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    const allUploaded = await uploadPendingProofs(createdOrder.trackingToken);
+    setSubmitting(false);
+    if (allUploaded) {
+      finishAndNavigate(createdOrder.trackingToken);
+    } else {
+      setSubmitError("อัปโหลดหลักฐานบางรายการไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (submitting) return; // guards against double-click double-submit
+
+    // Order already exists (an earlier attempt got through order
+    // creation but some proof uploads failed) — never re-create it.
+    if (createdOrder) {
+      await handleRetryUploads();
+      return;
+    }
+
     setSubmitError(null);
 
     if (items.length === 0) {
@@ -254,6 +491,7 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
             deliveryNote: form.deliveryNote,
           },
           shippingMethodId,
+          shippingChoice,
         }),
       });
 
@@ -266,13 +504,21 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
         return;
       }
 
-      if (source === "buyNow") {
-        clearBuyNowItems();
-      } else {
-        clearCart();
+      const trackingToken: string = body.order.trackingToken;
+
+      if (body.order.shippingChoice === "free_social_proof") {
+        // Order exists now — every retry from here on targets this same
+        // order/token, never creates another one (§H/§V).
+        setCreatedOrder({ trackingToken });
+        const allUploaded = await uploadPendingProofs(trackingToken);
+        setSubmitting(false);
+        if (!allUploaded) {
+          setSubmitError("สร้างคำสั่งซื้อสำเร็จ แต่อัปโหลดหลักฐานบางรายการไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+          return;
+        }
       }
 
-      router.push(`/orders/${body.order.trackingToken}`);
+      finishAndNavigate(trackingToken);
     } catch {
       setSubmitError(ORDER_ERROR_MESSAGES.SERVICE_UNAVAILABLE);
       setSubmitting(false);
@@ -304,7 +550,7 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
         totalQuantity={totalQuantity}
         unitPriceSatang={unitPriceSatang}
         subtotalSatang={subtotalSatang}
-        shippingSatang={shippingMethod ? shippingSatang : null}
+        shippingSatang={shippingSatang}
         totalSatang={totalSatang}
       />
 
@@ -401,9 +647,16 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
             options={subdistricts.map((s) => ({ value: String(s.id), label: s.nameTh }))}
           />
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="field-postalCode" className="text-xs font-medium text-foreground/70">
-              รหัสไปรษณีย์
-            </label>
+            <div className="flex items-center gap-2">
+              <label htmlFor="field-postalCode" className="text-xs font-medium text-foreground/70">
+                รหัสไปรษณีย์
+              </label>
+              {form.postalCode && (
+                <span className="rounded-full border border-white/15 bg-ink-soft px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white/60">
+                  อัตโนมัติ
+                </span>
+              )}
+            </div>
             <input
               id="field-postalCode"
               name="postalCode"
@@ -412,8 +665,9 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
               placeholder="กรอกอัตโนมัติ"
               aria-describedby="field-postalCode-hint"
               aria-invalid={Boolean(fieldErrors.postalCode)}
-              className={`h-12 cursor-not-allowed border bg-paper-dim px-3 text-sm text-foreground/70 outline-none ${
-                fieldErrors.postalCode ? "border-accent" : "border-line"
+              style={{ colorScheme: "dark" }}
+              className={`h-12 cursor-not-allowed border bg-ink px-3 text-sm text-paper/80 outline-none ${
+                fieldErrors.postalCode ? "border-accent" : "border-white/10"
               }`}
             />
             {fieldErrors.postalCode ? (
@@ -467,11 +721,23 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
                 )}
               </span>
             </span>
-            <span className="font-medium tabular-nums">{formatSatangAsThb(method.priceSatang)}</span>
           </label>
         ))}
         {fieldErrors.shippingMethodId && <p className="text-xs text-accent">{fieldErrors.shippingMethodId}</p>}
       </fieldset>
+
+      {/* §B–§R: the actual shipping fee decision — free (with social
+          proof) vs paid ฿60. Placed after the address/method fieldsets
+          and before the submit button, per §R's suggested layout. */}
+      <ShippingChoiceSection
+        shippingChoice={shippingChoice}
+        onShippingChoiceChange={setShippingChoice}
+        proofs={proofs}
+        onProofFileSelect={handleProofFileSelect}
+        onProofRemove={handleProofRemove}
+        shippingChoiceError={fieldErrors.shippingChoice}
+        proofsSummaryError={proofsSummaryError ?? undefined}
+      />
 
       {submitError && (
         <p role="alert" className="border border-accent/40 bg-accent/5 p-3 text-sm text-accent">
@@ -484,7 +750,13 @@ export function CheckoutForm({ shippingMethods }: { shippingMethods: ShippingMet
         disabled={submitting}
         className="h-14 w-full bg-ink text-sm font-semibold uppercase tracking-[0.15em] text-paper transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {submitting ? "Placing order…" : `Place Order — ${formatSatangAsThb(totalSatang)}`}
+        {createdOrder
+          ? submitting
+            ? "กำลังอัปโหลดหลักฐาน…"
+            : "ลองอัปโหลดหลักฐานอีกครั้ง"
+          : submitting
+            ? "Placing order…"
+            : `Place Order — ${formatSatangAsThb(totalSatang)}`}
       </button>
     </form>
   );
@@ -642,8 +914,15 @@ function Field({
         placeholder={placeholder}
         aria-invalid={Boolean(error)}
         aria-describedby={error ? errorId : undefined}
-        className={`h-12 border bg-background px-3 text-sm outline-none focus:border-ink ${
-          error ? "border-accent" : "border-line"
+        // Explicit dark colors (not the theme-following bg-background /
+        // border-line tokens) — checkout inputs must render the same
+        // black CM502 surface regardless of the visitor's OS/browser
+        // light-or-dark preference. color-scheme: dark additionally
+        // keeps native browser-drawn chrome (the autofill highlight in
+        // particular) dark instead of the default light-yellow overlay.
+        style={{ colorScheme: "dark" }}
+        className={`h-12 border bg-ink px-3 text-sm text-paper placeholder:text-white/35 outline-none focus:border-white/60 ${
+          error ? "border-accent" : "border-white/15"
         }`}
       />
       {error && (
@@ -696,8 +975,19 @@ function SelectField({
         disabled={disabled}
         aria-invalid={Boolean(error)}
         aria-describedby={error ? errorId : undefined}
-        className={`h-12 border bg-background px-3 text-sm outline-none focus:border-ink disabled:cursor-not-allowed disabled:bg-paper-dim disabled:text-foreground/40 ${
-          error ? "border-accent" : "border-line"
+        // Same explicit-dark rationale as Field above — this is also
+        // what keeps the native <option> popup itself dark instead of
+        // the browser default white listbox.
+        style={{ colorScheme: "dark" }}
+        // "Reduced opacity" for the disabled look is done with an opaque,
+        // slightly lighter solid shade (bg-ink-soft) rather than a CSS
+        // opacity/alpha utility — opacity on a solid background blends
+        // with whatever sits *behind* the page (which follows the
+        // visitor's OS light/dark preference elsewhere on the site), so
+        // it can wash out to gray on a light backdrop. An opaque color
+        // swap can never do that.
+        className={`h-12 border bg-ink px-3 text-sm text-paper outline-none focus:border-white/60 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-ink-soft disabled:text-white/40 ${
+          error ? "border-accent" : "border-white/15"
         }`}
       >
         <option value="">{placeholder}</option>

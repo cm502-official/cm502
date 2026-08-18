@@ -4,6 +4,9 @@ import { getAdminOrderDetail } from "@/lib/admin/get-admin-order-detail";
 import { flattenOrderItemsToProductionRows } from "@/lib/admin/flatten-production-list";
 import { formatSatangAsThb } from "@/lib/money";
 import { getFulfillmentStatusLabel, getPaymentStatusLabel } from "@/lib/orders/lifecycle";
+import { REQUIRED_PROOF_COUNT } from "@/lib/shipping-proofs/proof-types";
+import { ProofThumbnailGrid } from "@/components/admin/proof-thumbnail-grid";
+import { ProofReviewActions } from "@/components/admin/proof-review-actions";
 
 export const metadata = { title: "Order detail" };
 
@@ -57,6 +60,32 @@ export default async function AdminOrderDetailPage({
           />
         )}
       </div>
+
+      {order.shippingChoice === "free_social_proof" && (
+        <div className="flex flex-col gap-3 border border-line p-4">
+          <h2 className="text-xs font-semibold uppercase tracking-[0.15em] text-foreground/60">
+            หลักฐานส่งฟรี
+          </h2>
+          <div className="grid grid-cols-1 gap-x-8 gap-y-1 text-sm sm:grid-cols-2">
+            <Field label="ตัวเลือกการจัดส่ง" value="ทำกิจกรรมรับสิทธิ์ส่งฟรี" />
+            <Field
+              label="จำนวนหลักฐานที่อัปโหลด"
+              value={`${order.proofs.length}/${REQUIRED_PROOF_COUNT}`}
+            />
+          </div>
+
+          {order.proofs.length === 0 ? (
+            <p className="text-sm text-foreground/60">ลูกค้ายังไม่ได้อัปโหลดหลักฐาน</p>
+          ) : (
+            <ProofThumbnailGrid proofs={order.proofs} />
+          )}
+
+          <ProofReviewActions orderNumber={order.orderNumber} currentStatus={order.proofReviewStatus} />
+          {order.proofReviewStatus === "rejected" && order.proofReviewReason && (
+            <p className="text-xs text-foreground/60">เหตุผลที่ไม่ผ่าน: {order.proofReviewReason}</p>
+          )}
+        </div>
+      )}
 
       <div>
         <h2 className="text-xs font-semibold uppercase tracking-[0.15em] text-foreground/60">

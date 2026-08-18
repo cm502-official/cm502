@@ -43,3 +43,27 @@ export async function requireAdminUser(): Promise<AdminUser> {
 
   return { id: adminRow.id, fullName: adminRow.full_name, role: adminRow.role as "admin" | "staff" };
 }
+
+/**
+ * Same authorization check as requireAdminUser(), but for API Route
+ * Handlers — returns null instead of calling next/navigation's
+ * redirect(), which would produce a confusing HTML redirect response
+ * for a JSON API caller instead of a clean 401/403.
+ */
+export async function getAdminUserOrNull(): Promise<AdminUser | null> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const { data: adminRow } = await supabase
+    .from("admin_users")
+    .select("id, full_name, role, is_active")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (!adminRow || !adminRow.is_active) return null;
+
+  return { id: adminRow.id, fullName: adminRow.full_name, role: adminRow.role as "admin" | "staff" };
+}

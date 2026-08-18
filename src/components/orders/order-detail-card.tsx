@@ -143,8 +143,12 @@ export function OrderDetailCard({
           <span className="tabular-nums">{formatSatangAsThb(order.subtotalSatang)}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-foreground/60">Shipping</span>
-          <span className="tabular-nums">{formatSatangAsThb(order.shippingFeeSatang)}</span>
+          <span className="text-foreground/60">ค่าจัดส่ง</span>
+          {order.shippingChoice === "free_social_proof" ? (
+            <span className="text-right">{freeShippingStatusLabel(order.proofReviewStatus)}</span>
+          ) : (
+            <span className="tabular-nums">{formatSatangAsThb(order.shippingFeeSatang)}</span>
+          )}
         </div>
         <div className="mt-1 flex justify-between border-t border-line pt-2 text-base font-semibold">
           <span>Total</span>
@@ -162,6 +166,23 @@ export function OrderDetailCard({
       )}
     </div>
   );
+}
+
+/**
+ * §AA: the customer confirmation stays concise — a one-line status, not
+ * the 7 screenshots (that's admin-only, §AB). Never implies the
+ * screenshots have actually been checked ("verified") until an admin
+ * has genuinely approved them (§N).
+ */
+function freeShippingStatusLabel(proofReviewStatus: string | null): string {
+  switch (proofReviewStatus) {
+    case "approved":
+      return "จัดส่งฟรี — หลักฐานผ่านการตรวจสอบแล้ว";
+    case "rejected":
+      return "จัดส่งฟรี — หลักฐานไม่ผ่านการตรวจสอบ";
+    default:
+      return "จัดส่งฟรี — รอตรวจสอบหลักฐาน";
+  }
 }
 
 function FulfillmentTimeline({ current }: { current: string }) {

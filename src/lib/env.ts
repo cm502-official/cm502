@@ -27,6 +27,7 @@ export function getPublicEnv() {
 const serverEnvSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1, "SUPABASE_SERVICE_ROLE_KEY is missing."),
   SUPABASE_STORAGE_SLIPS_BUCKET: z.string().min(1).default("payment-slips"),
+  SUPABASE_STORAGE_SHIPPING_PROOFS_BUCKET: z.string().min(1).default("shipping-proofs"),
   OCR_PROVIDER: z.enum(["mock", "external"]).default("mock"),
   OCR_API_KEY: z.string().optional(),
   OCR_API_URL: z.string().optional(),
@@ -43,6 +44,7 @@ export function getServerEnv() {
   return serverEnvSchema.parse({
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
     SUPABASE_STORAGE_SLIPS_BUCKET: process.env.SUPABASE_STORAGE_SLIPS_BUCKET,
+    SUPABASE_STORAGE_SHIPPING_PROOFS_BUCKET: process.env.SUPABASE_STORAGE_SHIPPING_PROOFS_BUCKET,
     OCR_PROVIDER: process.env.OCR_PROVIDER,
     OCR_API_KEY: process.env.OCR_API_KEY,
     OCR_API_URL: process.env.OCR_API_URL,

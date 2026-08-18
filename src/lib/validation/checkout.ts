@@ -8,6 +8,7 @@
  */
 import { z } from "zod";
 import { resolveThaiAddressHierarchy } from "@/lib/thai-address";
+import { SHIPPING_CHOICES } from "@/lib/shipping-proofs/shipping-choice";
 
 // The jersey is sold as unlimited preorder (§ create_order_with_reservation
 // preorder bypass) — these are no longer stock-derived caps, just a sane
@@ -148,6 +149,13 @@ export const cartLineSchema = z
     path: ["customizations"],
   });
 
+// §K/§Q: only the enum choice is ever accepted from the client — never a
+// numeric price. The server (route.ts + the RPC) derives the actual fee
+// from this value; a request supplying anything else is rejected outright.
+export const shippingChoiceSchema = z.enum(SHIPPING_CHOICES, {
+  error: "กรุณาเลือกวิธีจัดส่ง",
+});
+
 export const createOrderRequestSchema = z.object({
   idempotencyKey: z.string().trim().min(1).max(100),
   items: z
@@ -157,6 +165,7 @@ export const createOrderRequestSchema = z.object({
   customer: customerSchema,
   address: addressSchema,
   shippingMethodId: z.string().uuid("Select a shipping method"),
+  shippingChoice: shippingChoiceSchema,
 });
 
 export type CustomerInput = z.infer<typeof customerSchema>;

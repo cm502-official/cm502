@@ -36,6 +36,7 @@ const validPayload = {
     postalCode: "50200",
   },
   shippingMethodId: SHIPPING_METHOD_ID,
+  shippingChoice: "paid_shipping",
 };
 
 function makeRequest(body: unknown): Request {
@@ -53,6 +54,8 @@ function makeRpcSuccess(overrides: Partial<Record<string, unknown>> = {}) {
       tracking_token: "a".repeat(32),
       total_satang: 500,
       reservation_expires_at: "2026-08-15T12:00:00Z",
+      shipping_choice: "paid_shipping",
+      shipping_fee_satang: 6000,
       idempotent_replay: false,
       ...overrides,
     },
@@ -250,6 +253,8 @@ describe("POST /api/orders — success response shape", () => {
       trackingToken: "b".repeat(32),
       totalSatang: 99000,
       reservationExpiresAt: "2026-08-15T12:00:00Z",
+      shippingChoice: "paid_shipping",
+      shippingFeeSatang: 6000,
     });
     expect(body.order).not.toHaveProperty("id");
     expect(body.order).not.toHaveProperty("customerId");
@@ -274,6 +279,50 @@ describe("POST /api/orders — idempotency", () => {
     rpcMock.mockResolvedValue(makeRpcSuccess({ idempotent_replay: false }));
     const res = await POST(makeRequest(validPayload));
     expect(res.status).toBe(201);
+  });
+
+  it("an idempotent replay reports the order's ORIGINAL shipping choice, never what this later request asked for", async () => {
+    // The RPC is the source of truth here — simulate it returning the
+    // choice actually persisted on first creation (free), even though
+    // this replay request below asks for paid_shipping.
+    rpcMock.mockResolvedValue(
+      makeRpcSuccess({ idempotent_replay: true, shipping_choice: "free_social_proof", shipping_fee_satang: 0 }),
+    );
+    const res = await POST(makeRequest({ ...validPayload, shippingChoice: "paid_shipping" }));
+    const body = await res.json();
+    expect(body.order.shippingChoice).toBe("free_social_proof");
+    expect(body.order.shippingFeeSatang).toBe(0);
+  });
+});
+
+describe("POST /api/orders — shipping choice (§K)", () => {
+  it("forwards the shipping choice enum to the database function", async () => {
+    rpcMock.mockResolvedValue(makeRpcSuccess());
+    await POST(makeRequest({ ...validPayload, shippingChoice: "free_social_proof" }));
+    const [, rpcArgs] = rpcMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect(rpcArgs.p_shipping_choice).toBe("free_social_proof");
+  });
+
+  it("rejects a request with an invalid shipping choice before calling the database", async () => {
+    const res = await POST(makeRequest({ ...validPayload, shippingChoice: "totally_free" }));
+    expect(res.status).toBe(400);
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a request missing shipping choice entirely, never reaching the database", async () => {
+    const rest: Partial<typeof validPayload> = { ...validPayload };
+    delete rest.shippingChoice;
+    const res = await POST(makeRequest(rest));
+    expect(res.status).toBe(400);
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it("never forwards a client-supplied numeric shipping fee — only the enum choice is ever sent", async () => {
+    rpcMock.mockResolvedValue(makeRpcSuccess());
+    await POST(makeRequest({ ...validPayload, shippingChoice: "free_social_proof", shippingFeeSatang: 0 }));
+    const [, rpcArgs] = rpcMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect(rpcArgs).not.toHaveProperty("p_shipping_fee_satang");
+    expect(rpcArgs).not.toHaveProperty("p_shipping_price");
   });
 });
 

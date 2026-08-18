@@ -24,7 +24,7 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(async () => supabaseClientMock),
 }));
 
-const { requireAdminUser } = await import("./require-admin");
+const { requireAdminUser, getAdminUserOrNull } = await import("./require-admin");
 
 beforeEach(() => {
   redirectMock.mockClear();
@@ -63,5 +63,35 @@ describe("requireAdminUser — the real /admin authorization gate", () => {
     const result = await requireAdminUser();
     expect(result).toEqual({ id: "user-1", fullName: "Jane Staff", role: "admin" });
     expect(redirectMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("getAdminUserOrNull — the API-route variant (no redirect)", () => {
+  it("returns null when there is no authenticated user", async () => {
+    getUserMock.mockResolvedValue({ data: { user: null } });
+    expect(await getAdminUserOrNull()).toBeNull();
+    expect(redirectMock).not.toHaveBeenCalled();
+  });
+
+  it("returns null when the user has no admin_users row", async () => {
+    getUserMock.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    adminUsersSingleMock.mockResolvedValue({ data: null });
+    expect(await getAdminUserOrNull()).toBeNull();
+  });
+
+  it("returns null when the admin_users row is inactive", async () => {
+    getUserMock.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    adminUsersSingleMock.mockResolvedValue({
+      data: { id: "user-1", full_name: "Staff", role: "staff", is_active: false },
+    });
+    expect(await getAdminUserOrNull()).toBeNull();
+  });
+
+  it("returns the admin user when active", async () => {
+    getUserMock.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    adminUsersSingleMock.mockResolvedValue({
+      data: { id: "user-1", full_name: "Jane Staff", role: "admin", is_active: true },
+    });
+    expect(await getAdminUserOrNull()).toEqual({ id: "user-1", fullName: "Jane Staff", role: "admin" });
   });
 });

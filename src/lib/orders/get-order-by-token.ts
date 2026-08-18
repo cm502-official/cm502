@@ -18,6 +18,11 @@ export interface OrderConfirmation {
   reservationExpiresAt: string | null;
   createdAt: string;
   shippingMethodName: string | null;
+  // §AA: the customer confirmation only ever needs the choice + a coarse
+  // review status — never the 7 individual screenshots or per-proof
+  // detail, that's admin-only (§AB).
+  shippingChoice: string;
+  proofReviewStatus: string | null;
   shippingAddress: {
     addressLine: string;
     soiRoad: string | null;
@@ -73,6 +78,7 @@ export async function getOrderByTrackingToken(token: string): Promise<OrderConfi
       order_number, payment_status, fulfillment_status,
       subtotal_satang, shipping_fee_satang, total_satang,
       reservation_expires_at, created_at,
+      shipping_choice, proof_review_status,
       shipping_methods ( name ),
       addresses ( address_line, soi_road, subdistrict, district, province, postal_code, delivery_note ),
       customers ( full_name ),
@@ -93,6 +99,8 @@ export async function getOrderByTrackingToken(token: string): Promise<OrderConfi
     total_satang: number;
     reservation_expires_at: string | null;
     created_at: string;
+    shipping_choice: string;
+    proof_review_status: string | null;
     shipping_methods: { name: string } | null;
     addresses: {
       address_line: string;
@@ -125,6 +133,8 @@ export async function getOrderByTrackingToken(token: string): Promise<OrderConfi
     reservationExpiresAt: row.reservation_expires_at,
     createdAt: row.created_at,
     shippingMethodName: row.shipping_methods?.name ?? null,
+    shippingChoice: row.shipping_choice,
+    proofReviewStatus: row.proof_review_status,
     shippingAddress: row.addresses
       ? {
           addressLine: row.addresses.address_line,

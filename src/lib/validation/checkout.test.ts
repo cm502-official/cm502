@@ -240,6 +240,7 @@ describe("createOrderRequestSchema — full valid Thai checkout", () => {
     },
     address: VALID_ADDRESS,
     shippingMethodId: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    shippingChoice: "paid_shipping" as const,
   };
 
   it("accepts a valid full payload", () => {
@@ -273,6 +274,22 @@ describe("createOrderRequestSchema — full valid Thai checkout", () => {
       address: { ...validPayload.address, postalCode: "123" },
     };
     expect(createOrderRequestSchema.safeParse(payload).success).toBe(false);
+  });
+
+  it("accepts free_social_proof as a valid shipping choice", () => {
+    const payload = { ...validPayload, shippingChoice: "free_social_proof" };
+    expect(createOrderRequestSchema.safeParse(payload).success).toBe(true);
+  });
+
+  it("rejects a missing shipping choice", () => {
+    const rest: Partial<typeof validPayload> = { ...validPayload };
+    delete rest.shippingChoice;
+    expect(createOrderRequestSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it("rejects an attempted client-supplied numeric/free-form shipping choice", () => {
+    expect(createOrderRequestSchema.safeParse({ ...validPayload, shippingChoice: "0" }).success).toBe(false);
+    expect(createOrderRequestSchema.safeParse({ ...validPayload, shippingChoice: "free" }).success).toBe(false);
   });
 
   it("rejects a malformed administrative combination (hierarchy validation)", () => {
