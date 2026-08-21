@@ -6,6 +6,7 @@ export interface AdminOrderSummary {
   orderNumber: string;
   customerName: string | null;
   customerPhone: string | null;
+  customerEmail: string | null;
   paymentStatus: string;
   fulfillmentStatus: string;
   totalQuantity: number;
@@ -23,7 +24,11 @@ export interface AdminOrderSummary {
  * exactly this data, so Postgres itself is the real enforcement even if
  * the app-level requireAdminUser() check were ever bypassed.
  */
-export async function getRecentOrdersForAdmin(limit = 50): Promise<AdminOrderSummary[]> {
+// §11 admin search covers whatever's fetched here — this shop's order
+// volume is small (dozens–low hundreds), so one generous, cheap query
+// plus client-side search/pagination (src/lib/admin/filter-admin-orders.ts)
+// is simpler and just as correct as a server-side search endpoint.
+export async function getRecentOrdersForAdmin(limit = 500): Promise<AdminOrderSummary[]> {
   const supabase = await createClient();
 
   const { data, error } = await supabase
@@ -32,7 +37,7 @@ export async function getRecentOrdersForAdmin(limit = 50): Promise<AdminOrderSum
       `
       order_number, payment_status, fulfillment_status,
       subtotal_satang, shipping_fee_satang, total_satang, created_at,
-      customers ( full_name, phone ),
+      customers ( full_name, phone, email ),
       order_items ( quantity, unit_price_satang )
     `,
     )
@@ -49,12 +54,13 @@ export async function getRecentOrdersForAdmin(limit = 50): Promise<AdminOrderSum
     shipping_fee_satang: number;
     total_satang: number;
     created_at: string;
-    customers: { full_name: string; phone: string } | null;
+    customers: { full_name: string; phone: string; email: string | null } | null;
     order_items: Array<{ quantity: number; unit_price_satang: number }>;
   }>).map((row) => ({
     orderNumber: row.order_number,
     customerName: row.customers?.full_name ?? null,
     customerPhone: row.customers?.phone ?? null,
+    customerEmail: row.customers?.email ?? null,
     paymentStatus: row.payment_status,
     fulfillmentStatus: row.fulfillment_status,
     totalQuantity: row.order_items.reduce((sum, i) => sum + i.quantity, 0),

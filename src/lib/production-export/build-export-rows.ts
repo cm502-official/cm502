@@ -122,7 +122,7 @@ export function formatProductionRowsAsCsv(rows: ProductionRow[]): string {
   return [header, ...lines].join("\n");
 }
 
-function csvEscape(value: string): string {
+export function csvEscape(value: string): string {
   if (value.includes(",") || value.includes('"')) {
     return `"${value.replace(/"/g, '""')}"`;
   }

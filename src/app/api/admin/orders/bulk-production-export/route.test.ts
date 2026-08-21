@@ -17,10 +17,31 @@ vi.mock("@/lib/supabase/server", () => ({
 
 const { POST } = await import("./route");
 
+const ADDRESS_A = {
+  address_line: "123/45",
+  soi_road: null,
+  subdistrict: "สุเทพ",
+  district: "เมืองเชียงใหม่",
+  province: "เชียงใหม่",
+  postal_code: "50200",
+  delivery_note: null,
+};
+const ADDRESS_B = {
+  address_line: "88/8",
+  soi_road: null,
+  subdistrict: "คลองเตยเหนือ",
+  district: "เขตวัฒนา",
+  province: "กรุงเทพมหานคร",
+  postal_code: "10110",
+  delivery_note: null,
+};
+
 const ORDER_1 = {
   order_number: "CM502-20260821-0001",
   payment_status: "verified",
   fulfillment_status: "paid",
+  customers: { full_name: "Order A", phone: "0810000000" },
+  addresses: ADDRESS_A,
   order_items: [
     { color_name_snapshot: "Black", size_name_snapshot: "8XL", quantity: 1, customizations: [{ name: "Nachanok", number: "22" }] },
     { color_name_snapshot: "Black", size_name_snapshot: "2XL", quantity: 1, customizations: [{ name: "KORKOR", number: "10" }] },
@@ -30,6 +51,8 @@ const ORDER_2 = {
   order_number: "CM502-20260821-0002",
   payment_status: "verified",
   fulfillment_status: "paid",
+  customers: { full_name: "Order B", phone: "0820000000" },
+  addresses: ADDRESS_B,
   order_items: [
     { color_name_snapshot: "Navy", size_name_snapshot: "L", quantity: 1, customizations: [{ name: "NAME", number: "88" }] },
     { color_name_snapshot: "White", size_name_snapshot: "M", quantity: 1, customizations: [{ name: "TEST", number: "07" }] },
@@ -39,6 +62,8 @@ const CANCELLED_ORDER = {
   order_number: "CM502-CANCELLED-0001",
   payment_status: "verified",
   fulfillment_status: "cancelled",
+  customers: { full_name: "Cancelled", phone: "0830000000" },
+  addresses: ADDRESS_A,
   order_items: [{ color_name_snapshot: "Black", size_name_snapshot: "M", quantity: 1, customizations: [{ name: null, number: null }] }],
 };
 
@@ -71,30 +96,52 @@ describe("POST /api/admin/orders/bulk-production-export — validation", () => {
   });
 });
 
-describe("POST /api/admin/orders/bulk-production-export — multi-order grouped export", () => {
-  it("matches the task-brief grouped example exactly", async () => {
+describe("POST /api/admin/orders/bulk-production-export — multi-order grouping (§7/§8)", () => {
+  it("continuously numbers across orders and puts address only on each order's first row", async () => {
     inMock.mockResolvedValue({ data: [ORDER_1, ORDER_2], error: null });
     const res = await POST(makeRequest({ orderNumbers: [ORDER_1.order_number, ORDER_2.order_number] }));
     const body = await res.json();
     expect(body.requiresConfirmation).toBe(false);
-    expect(body.groupedTxt).toBe(
-      [
-        "# CM502-20260821-0001",
-        "1/black/8XL/Nachanok/22",
-        "2/black/2XL/KORKOR/10",
-        "# CM502-20260821-0002",
-        "1/navy/L/NAME/88",
-        "2/white/M/TEST/07",
-      ].join("\n"),
-    );
+    expect(body.rows.map((r: { sequence: number }) => r.sequence)).toEqual([1, 2, 3, 4]);
+    expect(body.rows[0].recipient).toBe("Order A");
+    expect(body.rows[0].address).toContain("ต.สุเทพ");
+    expect(body.rows[1].recipient).toBe("");
+    expect(body.rows[1].address).toBe("");
+    expect(body.rows[2].recipient).toBe("Order B");
+    expect(body.rows[2].address).toContain("เขตวัฒนา");
+    expect(body.rows[3].recipient).toBe("");
+    expect(body.rows[3].address).toBe("");
   });
 
-  it("raw mode has no headers and renumbers continuously", async () => {
-    inMock.mockResolvedValue({ data: [ORDER_1, ORDER_2], error: null });
-    const res = await POST(makeRequest({ orderNumbers: [ORDER_1.order_number, ORDER_2.order_number], mode: "raw" }));
+  it("preserves the caller's requested order sequence, not database return order", async () => {
+    // DB returns B before A — response rows must still follow the requested [A, B] order.
+    inMock.mockResolvedValue({ data: [ORDER_2, ORDER_1], error: null });
+    const res = await POST(makeRequest({ orderNumbers: [ORDER_1.order_number, ORDER_2.order_number] }));
     const body = await res.json();
-    expect(body.txt).not.toContain("#");
-    expect(body.txt).toBe(["1/black/8XL/Nachanok/22", "2/black/2XL/KORKOR/10", "3/navy/L/NAME/88", "4/white/M/TEST/07"].join("\n"));
+    expect(body.rows[0].recipient).toBe("Order A");
+    expect(body.rows[2].recipient).toBe("Order B");
+  });
+
+  it("never lets one order's address leak onto another order's rows", async () => {
+    inMock.mockResolvedValue({ data: [ORDER_1, ORDER_2], error: null });
+    const res = await POST(makeRequest({ orderNumbers: [ORDER_1.order_number, ORDER_2.order_number] }));
+    const body = await res.json();
+    const orderBRows = body.rows.slice(2);
+    expect(orderBRows.every((r: { address: string }) => !r.address.includes("สุเทพ"))).toBe(true);
+  });
+
+  it("CSV headers are exactly the required 8 columns", async () => {
+    inMock.mockResolvedValue({ data: [ORDER_1], error: null });
+    const res = await POST(makeRequest({ orderNumbers: [ORDER_1.order_number] }));
+    const body = await res.json();
+    expect(body.csv.split("\n")[0]).toBe("#,Color,Size,Name,Number,Recipient,Phone,Address");
+  });
+
+  it("returns a real xlsx (zip) payload", async () => {
+    inMock.mockResolvedValue({ data: [ORDER_1, ORDER_2], error: null });
+    const res = await POST(makeRequest({ orderNumbers: [ORDER_1.order_number, ORDER_2.order_number] }));
+    const body = await res.json();
+    expect(Buffer.from(body.xlsxBase64, "base64").subarray(0, 2).toString()).toBe("PK");
   });
 });
 
@@ -132,6 +179,8 @@ describe("POST /api/admin/orders/bulk-production-export — corrupt customizatio
       order_number: "CM502-BAD",
       payment_status: "verified",
       fulfillment_status: "paid",
+      customers: { full_name: "Bad", phone: "0840000000" },
+      addresses: ADDRESS_A,
       order_items: [{ color_name_snapshot: "Black", size_name_snapshot: "M", quantity: 1, customizations: [{ name: "Bad/Name", number: "1" }] }],
     };
     inMock.mockResolvedValue({ data: [ORDER_1, bad], error: null });
