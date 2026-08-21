@@ -1,60 +1,85 @@
 import "server-only";
 
-import { createClient } from "@/lib/supabase/server";
+import { unstable_cache } from "next/cache";
+import { createPublicClient } from "@/lib/supabase/public";
 import { getPublicEnv } from "@/lib/env";
 import type { JerseyProduct } from "./types";
 
 /**
  * The one loader the storefront needs for Phase 2: everything to render
  * /products/jersey and drive variant selection, in a single structured
- * object. Uses the anon/RLS server client — every table it reads is
- * public-read for active rows (see 0002_rls.sql), so this works for
- * anonymous visitors with no special auth.
+ * object. Uses the public anon client (no cookies — see
+ * src/lib/supabase/public.ts) — every table it reads is public-read for
+ * active rows (see 0002_rls.sql), so this works identically for
+ * anonymous visitors with no special auth, and is safe to wrap in
+ * unstable_cache below.
+ *
+ * Perf: this used to be a fully-dynamic, uncached, per-request fetch —
+ * measured at ~0.9-2s server time alone (product row ~500ms mostly
+ * connection setup, then a 5-way Promise.all batch ~400ms), which is
+ * why "SHOP NOW" felt slow. Catalog data changes rarely, so it's cached
+ * for JERSEY_PRODUCT_REVALIDATE_SECONDS — after the cache is warm,
+ * requests skip Supabase entirely.
  *
  * Returns null if the product doesn't exist / isn't published, or if
  * Supabase isn't reachable (no live project connected yet, network
  * failure, etc.) — callers render the appropriate empty/error state and
- * never see a raw Postgres/Supabase error.
+ * never see a raw Postgres/Supabase error. A failed attempt is never
+ * cached (see the try/catch placement below) so a transient outage
+ * doesn't stick around as a false "Coming soon" for the whole
+ * revalidation window.
  */
+const JERSEY_PRODUCT_REVALIDATE_SECONDS = 60;
+export const JERSEY_PRODUCT_CACHE_TAG = "jersey-product";
+
+const getCachedJerseyProduct = unstable_cache(loadJerseyProduct, ["jersey-product-v2"], {
+  revalidate: JERSEY_PRODUCT_REVALIDATE_SECONDS,
+  tags: [JERSEY_PRODUCT_CACHE_TAG],
+});
+
 export async function getJerseyProduct(): Promise<JerseyProduct | null> {
   try {
-    return await loadJerseyProduct();
+    return await getCachedJerseyProduct();
   } catch {
-    // No Supabase project connected yet, invalid env, network failure,
-    // unexpected query shape — all collapse to the same customer-safe
-    // "unavailable" outcome. Never let a raw Supabase/env error reach the
-    // page (§23/§29).
     return null;
   }
 }
 
 async function loadJerseyProduct(): Promise<JerseyProduct | null> {
-  const supabase = await createClient();
+  const supabase = createPublicClient();
 
-  const { data: product, error: productError } = await supabase
-    .from("products")
-    .select("id, slug, name, description, care_info, base_price_satang, is_preorder")
-    .eq("slug", "jersey")
-    .eq("is_active", true)
-    .maybeSingle();
+  // Wave 1: the product row and the two color/size reference tables are
+  // independent of each other (colors/sizes don't depend on product.id)
+  // — fire all three together instead of appending colors/sizes to the
+  // second wave, so the product-dependent queries below only wait on
+  // one round trip's worth of latency, not two.
+  const [{ data: product, error: productError }, { data: colors }, { data: sizes }] = await Promise.all([
+    supabase
+      .from("products")
+      .select("id, slug, name, description, care_info, base_price_satang, is_preorder")
+      .eq("slug", "jersey")
+      .eq("is_active", true)
+      .maybeSingle(),
+    supabase.from("colors").select("id, name, hex_code, sort_order").order("sort_order"),
+    supabase.from("sizes").select("id, name, sort_order").order("sort_order"),
+  ]);
 
   if (productError || !product) return null;
 
-  const [{ data: colors }, { data: sizes }, { data: variants }, { data: images }, { data: stockRows }] =
-    await Promise.all([
-      supabase.from("colors").select("id, name, hex_code, sort_order").order("sort_order"),
-      supabase.from("sizes").select("id, name, sort_order").order("sort_order"),
-      supabase
-        .from("product_variants")
-        .select("id, color_id, size_id, sku, price_satang_override, is_active")
-        .eq("product_id", product.id),
-      supabase
-        .from("product_images")
-        .select("id, color_id, variant_id, storage_path, alt_text, image_type, sort_order")
-        .eq("product_id", product.id)
-        .order("sort_order"),
-      supabase.rpc("get_active_variant_stock", { p_product_id: product.id }),
-    ]);
+  // Wave 2: these three genuinely depend on product.id, so they can't
+  // join wave 1 — but they're independent of each other.
+  const [{ data: variants }, { data: images }, { data: stockRows }] = await Promise.all([
+    supabase
+      .from("product_variants")
+      .select("id, color_id, size_id, sku, price_satang_override, is_active")
+      .eq("product_id", product.id),
+    supabase
+      .from("product_images")
+      .select("id, color_id, variant_id, storage_path, alt_text, image_type, sort_order")
+      .eq("product_id", product.id)
+      .order("sort_order"),
+    supabase.rpc("get_active_variant_stock", { p_product_id: product.id }),
+  ]);
 
   const stockByVariant = new Map<string, number | null>(
     (stockRows ?? []).map((row: { variant_id: string; available_stock: number | null }) => [

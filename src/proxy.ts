@@ -3,12 +3,25 @@ import { createServerClient } from "@supabase/ssr";
 import { getPublicEnv } from "@/lib/env";
 
 /**
- * Refreshes the Supabase auth session on every request so Server Components
- * always see a valid session cookie. Also acts as the first gate for
- * /admin routes — full role verification still happens per-request in
- * admin layouts/route handlers, this is just the cheap early bounce.
+ * Refreshes the Supabase auth session so Server Components always see a
+ * valid session cookie, and acts as the first gate for /admin routes —
+ * full role verification still happens per-request in admin
+ * layouts/route handlers, this is just the cheap early bounce.
+ *
+ * Perf: only /admin actually uses a Supabase Auth session (this is a
+ * guest-checkout storefront — no customer accounts, nothing else reads
+ * `supabase.auth.*`). The auth refresh is a real network round trip to
+ * Supabase Auth, so running it on every storefront request/prefetch
+ * (homepage, product page, cart, checkout, ...) was pure unnecessary
+ * latency on the vast majority of traffic. Bailing out before touching
+ * Supabase at all for non-/admin paths removes that round trip entirely
+ * from the "SHOP NOW" navigation without changing /admin's behavior.
  */
 export async function proxy(request: NextRequest) {
+  if (!request.nextUrl.pathname.startsWith("/admin")) {
+    return NextResponse.next();
+  }
+
   let response = NextResponse.next({ request });
 
   let env;
