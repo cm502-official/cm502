@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   findDistrictById,
+  findDistrictByNameInProvince,
   findProvinceById,
+  findProvinceByName,
   findSubdistrictById,
+  findSubdistrictByNameInDistrict,
   getDistrictsByProvince,
   getProvinces,
   getSubdistrictsByDistrict,
@@ -147,5 +150,29 @@ describe("resolveThaiAddressHierarchy", () => {
     expect(
       resolveThaiAddressHierarchy({ provinceId: 999999, districtId: 999999, subdistrictId: 999999 }),
     ).toBeNull();
+  });
+});
+
+describe("findProvinceByName / findDistrictByNameInProvince / findSubdistrictByNameInDistrict — admin edit-form reverse lookups", () => {
+  it("resolves the exact task-brief example back from stored names", () => {
+    const province = findProvinceByName("เชียงใหม่");
+    expect(province?.id).toBe(CHIANG_MAI_PROVINCE_ID);
+
+    const district = findDistrictByNameInProvince("เมืองเชียงใหม่", province!.id);
+    expect(district?.id).toBe(MUEANG_CHIANG_MAI_DISTRICT_ID);
+
+    const subdistrict = findSubdistrictByNameInDistrict("สุเทพ", district!.id);
+    expect(subdistrict?.id).toBe(SUTHEP_SUBDISTRICT_ID);
+  });
+
+  it("returns undefined for an unknown province name", () => {
+    expect(findProvinceByName("Nowhereville")).toBeUndefined();
+  });
+
+  it("scopes district lookup to the given province — a same-named district in another province never matches", () => {
+    // "เมือง..." district names repeat across many provinces; searching
+    // under the wrong province id must not accidentally match one of them.
+    const bangkokMatch = findDistrictByNameInProvince("เมืองเชียงใหม่", 1 /* Bangkok */);
+    expect(bangkokMatch).toBeUndefined();
   });
 });

@@ -118,12 +118,22 @@ export const addressSchema = z
 const NAME_MAX_LENGTH = 15;
 const JERSEY_NUMBER_REGEX = /^\d{1,2}$/;
 
+// §17 (production export): "/" is the production-file delimiter and a
+// newline would corrupt a line entirely — banned at the source rather
+// than merely escaped at export time, so no customer/admin-entered name
+// can ever reach that far. (Number is already digit-only via
+// JERSEY_NUMBER_REGEX, so it can never contain either character.)
+const FORBIDDEN_NAME_CHARS_REGEX = /[/\n\r]/;
+
 export const shirtCustomizationSchema = z.object({
   name: z
     .string()
     .trim()
     .min(1)
     .max(NAME_MAX_LENGTH, `Name must be ${NAME_MAX_LENGTH} characters or fewer`)
+    .refine((v) => !FORBIDDEN_NAME_CHARS_REGEX.test(v), {
+      message: 'Name may not contain "/" or line breaks',
+    })
     .nullable(),
   number: z
     .string()

@@ -86,6 +86,26 @@ export function findProvinceById(id: number | null | undefined): ThaiProvince | 
   return provincesById.get(id);
 }
 
+/**
+ * Reverse lookups by canonical Thai name — used by the admin order-edit
+ * form (§1) to pre-fill the same dependent selects checkout uses, from
+ * an existing order's stored address (which persists names, not ids;
+ * see addresses.province/district/subdistrict). Scoped to the parent id
+ * so a repeated district/subdistrict name in a different province/
+ * district (e.g. "เมือง...") is never resolved to the wrong parent.
+ */
+export function findProvinceByName(name: string): ThaiProvince | undefined {
+  return data.provinces.find((p) => p.nameTh === name);
+}
+
+export function findDistrictByNameInProvince(name: string, provinceId: number): ThaiDistrict | undefined {
+  return getDistrictsByProvince(provinceId).find((d) => d.nameTh === name);
+}
+
+export function findSubdistrictByNameInDistrict(name: string, districtId: number): ThaiSubdistrict | undefined {
+  return getSubdistrictsByDistrict(districtId).find((s) => s.nameTh === name);
+}
+
 export function findDistrictById(id: number | null | undefined): ThaiDistrict | undefined {
   if (id == null) return undefined;
   return districtsById.get(id);

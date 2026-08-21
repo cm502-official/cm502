@@ -1,12 +1,16 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getAdminOrderDetail } from "@/lib/admin/get-admin-order-detail";
+import { getAdminCatalogVariants } from "@/lib/admin/get-admin-catalog";
+import { getOrderProductionExportData } from "@/lib/admin/get-order-production-export-data";
 import { flattenOrderItemsToProductionRows } from "@/lib/admin/flatten-production-list";
 import { formatSatangAsThb } from "@/lib/money";
 import { getFulfillmentStatusLabel, getPaymentStatusLabel } from "@/lib/orders/lifecycle";
 import { REQUIRED_PROOF_COUNT } from "@/lib/shipping-proofs/proof-types";
 import { ProofThumbnailGrid } from "@/components/admin/proof-thumbnail-grid";
 import { ProofReviewActions } from "@/components/admin/proof-review-actions";
+import { OrderEditToggle } from "@/components/admin/order-edit-toggle";
+import { ProductionExportPanel } from "@/components/admin/production-export-panel";
 
 export const metadata = { title: "Order detail" };
 
@@ -16,7 +20,11 @@ export default async function AdminOrderDetailPage({
   params: Promise<{ orderNumber: string }>;
 }) {
   const { orderNumber } = await params;
-  const order = await getAdminOrderDetail(orderNumber);
+  const [order, catalogVariants, exportData] = await Promise.all([
+    getAdminOrderDetail(orderNumber),
+    getAdminCatalogVariants(),
+    getOrderProductionExportData(orderNumber),
+  ]);
   if (!order) notFound();
 
   // Historical snapshot data only (§ admin production visibility) —
@@ -60,6 +68,15 @@ export default async function AdminOrderDetailPage({
           />
         )}
       </div>
+
+      {order.editable && (
+        <OrderEditToggle
+          orderNumber={order.orderNumber}
+          editable={order.editable}
+          paymentStatus={order.paymentStatus}
+          catalogVariants={catalogVariants}
+        />
+      )}
 
       {order.shippingChoice === "free_social_proof" && (
         <div className="flex flex-col gap-3 border border-line p-4">
@@ -122,6 +139,33 @@ export default async function AdminOrderDetailPage({
           </div>
         )}
       </div>
+
+      {exportData && <ProductionExportPanel orderNumber={order.orderNumber} data={exportData} />}
+
+      {order.editHistory.length > 0 && (
+        <div>
+          <h2 className="text-xs font-semibold uppercase tracking-[0.15em] text-foreground/60">
+            ประวัติการแก้ไข ({order.editHistory.length})
+          </h2>
+          <ul className="mt-3 flex flex-col gap-2">
+            {order.editHistory.map((entry) => (
+              <li key={entry.id} className="border border-line/60 p-3 text-xs">
+                <p className="font-medium">
+                  {new Date(entry.editedAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}
+                  {" — "}
+                  {entry.editedByName ?? "Unknown admin"}
+                </p>
+                <details className="mt-1 text-foreground/60">
+                  <summary className="cursor-pointer">รายละเอียดการเปลี่ยนแปลง</summary>
+                  <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words text-[11px]">
+                    {JSON.stringify(entry.changes, null, 2)}
+                  </pre>
+                </details>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

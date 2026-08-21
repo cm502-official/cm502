@@ -17,6 +17,23 @@ export interface AdminOrderProof {
   signedUrl: string | null;
 }
 
+export interface AdminEditableItem {
+  variantId: string;
+  colorId: string;
+  sizeId: string;
+  colorName: string;
+  sizeName: string;
+  quantity: number;
+  customizations: Array<{ name: string | null; number: string | null }> | null;
+}
+
+export interface AdminOrderEditHistoryEntry {
+  id: string;
+  editedAt: string;
+  editedByName: string | null;
+  changes: unknown;
+}
+
 export interface AdminOrderDetail {
   orderNumber: string;
   customerName: string | null;
@@ -29,6 +46,7 @@ export interface AdminOrderDetail {
   shippingFeeSatang: number;
   totalSatang: number;
   createdAt: string;
+  updatedAt: string;
   shippingMethodName: string | null;
   shippingAddress: {
     addressLine: string;
@@ -44,11 +62,32 @@ export interface AdminOrderDetail {
   proofReviewReason: string | null;
   proofReviewedAt: string | null;
   proofs: AdminOrderProof[];
+  // §1–§6 — everything the admin edit form needs, kept separate from
+  // the display-only fields above so read-only rendering never
+  // accidentally depends on edit-only shapes.
+  editable: {
+    customer: { fullName: string; phone: string; lineId: string; email: string };
+    address: {
+      addressLine: string;
+      soiRoad: string;
+      subdistrict: string;
+      district: string;
+      province: string;
+      postalCode: string;
+      deliveryNote: string;
+    };
+    items: AdminEditableItem[];
+  } | null;
+  // §14/§15 — production export status.
+  productionExportedAt: string | null;
+  productionExportedByName: string | null;
+  // §5 — most recent edits first.
+  editHistory: AdminOrderEditHistoryEntry[];
 }
 
 const SIGNED_URL_EXPIRES_SECONDS = 10 * 60; // 10 minutes — long enough to review one order, short-lived by design (§Z)
 
-/** Single order, full detail, for /admin/orders/[orderNumber] (§ admin production visibility + §O free-shipping proof review). */
+/** Single order, full detail, for /admin/orders/[orderNumber] (§ admin production visibility + §O free-shipping proof review + §1 admin editing). */
 export async function getAdminOrderDetail(orderNumber: string): Promise<AdminOrderDetail | null> {
   const supabase = await createClient();
 
@@ -57,13 +96,17 @@ export async function getAdminOrderDetail(orderNumber: string): Promise<AdminOrd
     .select(
       `
       order_number, payment_status, fulfillment_status,
-      subtotal_satang, shipping_fee_satang, total_satang, created_at,
+      subtotal_satang, shipping_fee_satang, total_satang, created_at, updated_at,
       shipping_choice, proof_review_status, proof_review_reason, proof_reviewed_at,
+      production_exported_at,
       shipping_methods ( name ),
-      addresses ( address_line, subdistrict, district, province, postal_code ),
-      customers ( full_name, phone ),
-      order_items ( color_name_snapshot, size_name_snapshot, quantity, unit_price_satang, customizations ),
-      order_shipping_proofs ( proof_type, platform, storage_path, file_size_bytes, mime_type, created_at )
+      addresses ( address_line, soi_road, subdistrict, district, province, postal_code, delivery_note ),
+      customers ( full_name, phone, line_id, email ),
+      order_items ( variant_id, color_name_snapshot, size_name_snapshot, quantity, unit_price_satang, customizations,
+        product_variants ( color_id, size_id ) ),
+      order_shipping_proofs ( proof_type, platform, storage_path, file_size_bytes, mime_type, created_at ),
+      production_exported_by_admin:admin_users!orders_production_exported_by_fkey ( full_name ),
+      order_edit_history ( id, edited_at, changes, edited_by_admin:admin_users ( full_name ) )
     `,
     )
     .eq("order_number", orderNumber)
@@ -79,25 +122,31 @@ export async function getAdminOrderDetail(orderNumber: string): Promise<AdminOrd
     shipping_fee_satang: number;
     total_satang: number;
     created_at: string;
+    updated_at: string;
     shipping_choice: string;
     proof_review_status: string | null;
     proof_review_reason: string | null;
     proof_reviewed_at: string | null;
+    production_exported_at: string | null;
     shipping_methods: { name: string } | null;
     addresses: {
       address_line: string;
+      soi_road: string | null;
       subdistrict: string;
       district: string;
       province: string;
       postal_code: string;
+      delivery_note: string | null;
     } | null;
-    customers: { full_name: string; phone: string } | null;
+    customers: { full_name: string; phone: string; line_id: string | null; email: string | null } | null;
     order_items: Array<{
+      variant_id: string;
       color_name_snapshot: string;
       size_name_snapshot: string;
       quantity: number;
       unit_price_satang: number;
       customizations: Array<{ name: string | null; number: string | null }> | null;
+      product_variants: { color_id: string; size_id: string } | null;
     }>;
     order_shipping_proofs: Array<{
       proof_type: string;
@@ -107,6 +156,8 @@ export async function getAdminOrderDetail(orderNumber: string): Promise<AdminOrd
       mime_type: string;
       created_at: string;
     }>;
+    production_exported_by_admin: { full_name: string } | null;
+    order_edit_history: Array<{ id: string; edited_at: string; changes: unknown; edited_by_admin: { full_name: string } | null }>;
   };
 
   const proofs = await buildSignedProofs(row.order_shipping_proofs ?? []);
@@ -123,6 +174,7 @@ export async function getAdminOrderDetail(orderNumber: string): Promise<AdminOrd
     shippingFeeSatang: row.shipping_fee_satang,
     totalSatang: row.total_satang,
     createdAt: row.created_at,
+    updatedAt: row.updated_at,
     shippingMethodName: row.shipping_methods?.name ?? null,
     shippingAddress: row.addresses
       ? {
@@ -143,6 +195,46 @@ export async function getAdminOrderDetail(orderNumber: string): Promise<AdminOrd
     proofReviewReason: row.proof_review_reason,
     proofReviewedAt: row.proof_reviewed_at,
     proofs,
+    editable:
+      row.customers && row.addresses
+        ? {
+            customer: {
+              fullName: row.customers.full_name,
+              phone: row.customers.phone,
+              lineId: row.customers.line_id ?? "",
+              email: row.customers.email ?? "",
+            },
+            address: {
+              addressLine: row.addresses.address_line,
+              soiRoad: row.addresses.soi_road ?? "",
+              subdistrict: row.addresses.subdistrict,
+              district: row.addresses.district,
+              province: row.addresses.province,
+              postalCode: row.addresses.postal_code,
+              deliveryNote: row.addresses.delivery_note ?? "",
+            },
+            items: row.order_items.map((i) => ({
+              variantId: i.variant_id,
+              colorId: i.product_variants?.color_id ?? "",
+              sizeId: i.product_variants?.size_id ?? "",
+              colorName: i.color_name_snapshot,
+              sizeName: i.size_name_snapshot,
+              quantity: i.quantity,
+              customizations: i.customizations,
+            })),
+          }
+        : null,
+    productionExportedAt: row.production_exported_at,
+    productionExportedByName: row.production_exported_by_admin?.full_name ?? null,
+    editHistory: (row.order_edit_history ?? [])
+      .slice()
+      .sort((a, b) => (a.edited_at < b.edited_at ? 1 : -1))
+      .map((h) => ({
+        id: h.id,
+        editedAt: h.edited_at,
+        editedByName: h.edited_by_admin?.full_name ?? null,
+        changes: h.changes,
+      })),
   };
 }
 
