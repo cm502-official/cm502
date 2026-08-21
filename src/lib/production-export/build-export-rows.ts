@@ -123,7 +123,10 @@ export function formatProductionRowsAsCsv(rows: ProductionRow[]): string {
 }
 
 export function csvEscape(value: string): string {
-  if (value.includes(",") || value.includes('"')) {
+  // The manufacturer Address field can now contain a real embedded "\n"
+  // (two-line formatting) — RFC 4180 requires quoting a field with a
+  // comma, quote, or newline, so all three are checked here.
+  if (value.includes(",") || value.includes('"') || value.includes("\n") || value.includes("\r")) {
     return `"${value.replace(/"/g, '""')}"`;
   }
   return value;

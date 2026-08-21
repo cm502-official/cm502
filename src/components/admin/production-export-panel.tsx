@@ -99,7 +99,7 @@ export function ProductionExportPanel({ orderNumber, data }: { orderNumber: stri
                 <td className="py-1.5 pr-3">{r.number}</td>
                 <td className="py-1.5 pr-3">{r.recipient}</td>
                 <td className="py-1.5 pr-3">{r.phone}</td>
-                <td className="py-1.5 whitespace-normal">{r.address}</td>
+                <td className="py-1.5 whitespace-pre-line">{r.address}</td>
               </tr>
             ))}
           </tbody>

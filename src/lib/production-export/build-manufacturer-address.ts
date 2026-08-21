@@ -1,11 +1,16 @@
 /**
- * §5 — builds one clean, printable shipping-address line for the
- * manufacturer file from the same canonical address fields already
- * stored on `addresses` (address_line, soi_road, subdistrict, district,
- * province, postal_code, delivery_note). Never emits "null"/"undefined"
- * or doubled/empty separators — every part is trimmed and dropped if
- * blank before joining, so a missing soi/road or delivery note simply
- * isn't there rather than leaving a gap.
+ * §5 — builds one clean, printable, TWO-LINE shipping address for the
+ * manufacturer file's single `Address` column, from the same canonical
+ * address fields already stored on `addresses` (address_line, soi_road,
+ * subdistrict, district, province, postal_code, delivery_note). Line 1
+ * is house/building/soi/road; line 2 is subdistrict/district/province/
+ * postal code (+ delivery note). The two lines are joined by exactly one
+ * "\n" — a real cell-internal newline, not two separate columns. Never
+ * emits "null"/"undefined" or doubled/empty separators — every part is
+ * trimmed and dropped if blank before joining, so a missing soi/road or
+ * delivery note simply isn't there rather than leaving a gap, and a
+ * wholly-missing line (rare, but possible with partial data) is dropped
+ * rather than leaving a stray blank line.
  */
 
 export interface ManufacturerAddressInput {
@@ -36,31 +41,40 @@ function formatProvince(province: string): string {
   return `จ.${province}`;
 }
 
-/** One printable line, e.g. `123/45 หมู่ 3 ถ.สุเทพ ต.สุเทพ อ.เมืองเชียงใหม่ จ.เชียงใหม่ 50200`. */
+/**
+ * Two-line printable address, e.g.:
+ * ```
+ * 123/45 หมู่ 3 ถ.สุเทพ
+ * ต.สุเทพ อ.เมืองเชียงใหม่ จ.เชียงใหม่ 50200
+ * ```
+ * Line 1 (house/building/soi/road) and line 2 (subdistrict/district/
+ * province/postal code, + delivery note) are joined by exactly one "\n"
+ * when both are present. If one line ends up empty (missing data), the
+ * result is just the other line — never a stray blank line or leading/
+ * trailing newline.
+ */
 export function formatManufacturerAddress(address: ManufacturerAddressInput): string {
-  const parts: string[] = [];
-
+  const line1Parts: string[] = [];
   const addressLine = address.addressLine?.trim();
-  if (addressLine) parts.push(addressLine);
-
+  if (addressLine) line1Parts.push(addressLine);
   const soiRoad = address.soiRoad?.trim();
-  if (soiRoad) parts.push(soiRoad);
+  if (soiRoad) line1Parts.push(soiRoad);
+  const line1 = line1Parts.filter(Boolean).join(" ");
 
+  const line2Parts: string[] = [];
   const subdistrict = address.subdistrict?.trim();
-  if (subdistrict) parts.push(withPrefix(subdistrict, "ต.", SUBDISTRICT_PREFIXES));
-
+  if (subdistrict) line2Parts.push(withPrefix(subdistrict, "ต.", SUBDISTRICT_PREFIXES));
   const district = address.district?.trim();
-  if (district) parts.push(withPrefix(district, "อ.", DISTRICT_PREFIXES));
-
+  if (district) line2Parts.push(withPrefix(district, "อ.", DISTRICT_PREFIXES));
   const province = address.province?.trim();
   const postalCode = address.postalCode?.trim();
   const provincePostal = [province ? formatProvince(province) : "", postalCode].filter(Boolean).join(" ");
-  if (provincePostal) parts.push(provincePostal);
-
-  let line = parts.filter(Boolean).join(" ");
+  if (provincePostal) line2Parts.push(provincePostal);
+  let line2 = line2Parts.filter(Boolean).join(" ");
 
   const deliveryNote = address.deliveryNote?.trim();
-  if (deliveryNote) line += ` | หมายเหตุ: ${deliveryNote}`;
+  if (deliveryNote && line2 !== "") line2 += ` | หมายเหตุ: ${deliveryNote}`;
+  else if (deliveryNote) line2 = `| หมายเหตุ: ${deliveryNote}`;
 
-  return line;
+  return [line1, line2].filter((line) => line !== "").join("\n");
 }

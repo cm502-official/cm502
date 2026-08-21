@@ -82,9 +82,10 @@ describe("GET /api/admin/orders/[orderNumber]/production-export", () => {
     expect(res.status).toBe(200);
     expect(body.errors).toEqual([]);
     expect(body.rows).toEqual([
-      { sequence: 1, color: "black", size: "8XL", name: "Nachanok", number: "22", recipient: "Nachanok Example", phone: "0812345678", address: "123/45 หมู่ 3 ต.สุเทพ อ.เมืองเชียงใหม่ จ.เชียงใหม่ 50200" },
+      { sequence: 1, color: "black", size: "8XL", name: "Nachanok", number: "22", recipient: "Nachanok Example", phone: "0812345678", address: "123/45 หมู่ 3\nต.สุเทพ อ.เมืองเชียงใหม่ จ.เชียงใหม่ 50200" },
       { sequence: 2, color: "black", size: "2XL", name: "KORKOR", number: "10", recipient: "", phone: "", address: "" },
     ]);
+    expect(body.rows[0].address.split("\n")).toHaveLength(2); // house/soi/road line, then subdistrict/district/province/postcode line
     expect(body.csv.split("\n")[0]).toBe("#,Color,Size,Name,Number,Recipient,Phone,Address");
     // xlsxBase64 decodes to a real zip (xlsx container) — starts with the "PK" local-file-header signature.
     expect(Buffer.from(body.xlsxBase64, "base64").subarray(0, 2).toString()).toBe("PK");

@@ -105,10 +105,12 @@ describe("POST /api/admin/orders/bulk-production-export — multi-order grouping
     expect(body.rows.map((r: { sequence: number }) => r.sequence)).toEqual([1, 2, 3, 4]);
     expect(body.rows[0].recipient).toBe("Order A");
     expect(body.rows[0].address).toContain("ต.สุเทพ");
+    expect(body.rows[0].address).toContain("\n"); // two-line address (house/soi/road, then subdistrict/district/province/postcode)
     expect(body.rows[1].recipient).toBe("");
     expect(body.rows[1].address).toBe("");
     expect(body.rows[2].recipient).toBe("Order B");
     expect(body.rows[2].address).toContain("เขตวัฒนา");
+    expect(body.rows[2].address).toContain("\n");
     expect(body.rows[3].recipient).toBe("");
     expect(body.rows[3].address).toBe("");
   });
