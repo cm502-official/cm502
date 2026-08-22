@@ -13,12 +13,22 @@ export default async function AdminProtectedLayout({ children }: { children: Rea
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-      <div className="flex items-center justify-between border-b border-line pb-4">
-        <div>
-          <Link href="/admin/orders" className="font-display text-xl uppercase tracking-wide">
-            CM502 Staff
-          </Link>
-          <p className="text-xs text-foreground/50">{admin.fullName}</p>
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-line pb-4">
+        <div className="flex items-center gap-6">
+          <div>
+            <Link href="/admin/orders" className="font-display text-xl uppercase tracking-wide">
+              CM502 Staff
+            </Link>
+            <p className="text-xs text-foreground/50">{admin.fullName}</p>
+          </div>
+          <nav className="flex items-center gap-4 text-sm font-medium tracking-wide">
+            <Link href="/admin/orders" className="transition-opacity hover:opacity-60">
+              Orders
+            </Link>
+            <Link href="/admin/report" className="transition-opacity hover:opacity-60">
+              Report
+            </Link>
+          </nav>
         </div>
         <AdminSignOutButton />
       </div>
